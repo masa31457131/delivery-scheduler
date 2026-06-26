@@ -1,5 +1,4 @@
-// API base — same origin in prod, proxied in dev
-const BASE = import.meta.env.DEV ? '' : '';
+const BASE = '';
 
 async function req(method, path, body) {
   const res = await fetch(`${BASE}/api${path}`, {
@@ -17,10 +16,16 @@ async function req(method, path, body) {
 export const api = {
   login: (name, password) => req('POST', '/auth/login', { name, password }),
   getUsers: () => req('GET', '/users'),
-  getProjects: (params) => {
-    const qs = new URLSearchParams(params).toString();
-    return req('GET', `/projects${qs ? '?' + qs : ''}`);
+  createUser: (data) => req('POST', '/users', data),
+  updateUser: (id, data) => req('PUT', `/users/${id}`, data),
+  deleteUser: (id) => req('DELETE', `/users/${id}`),
+  getConflicts: (date, time, exclude_project_id) => {
+    const params = new URLSearchParams({ date });
+    if (time) params.set('time', time);
+    if (exclude_project_id) params.set('exclude_project_id', exclude_project_id);
+    return req('GET', `/schedule/conflicts?${params}`);
   },
+  getProjects: () => req('GET', '/projects'),
   getProject: (id) => req('GET', `/projects/${id}`),
   createProject: (data) => req('POST', '/projects', data),
   updateProject: (id, data) => req('PUT', `/projects/${id}`, data),
