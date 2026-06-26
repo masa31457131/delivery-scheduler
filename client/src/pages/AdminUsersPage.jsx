@@ -207,23 +207,33 @@ function BlockedTab({ addToast }) {
 }
 
 // ── メール設定 ────────────────────────────────────────────────
+// ── メール設定 ────────────────────────────────────────────────
 function EmailTab({ addToast }) {
-  const [settings, setSettings] = useState({ from: '', notify_emails: [] });
+  const [settings, setSettings] = useState({
+    provider: 'gmail',
+    gmail_user: '',
+    gmail_app_password: '',
+    notify_emails: [],
+    from: '',
+  });
   const [newEmail, setNewEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
 
   useEffect(() => { api.getEmailSettings().then(setSettings); }, []);
 
+  const setField = (k, v) => setSettings(s => ({ ...s, [k]: v }));
+
   const addEmail = () => {
     const email = newEmail.trim();
     if (!email || !email.includes('@')) { addToast('有効なメールアドレスを入力してください', 'error'); return; }
-    if (settings.notify_emails.includes(email)) { addToast('すでに登録されています', 'error'); return; }
-    setSettings(s => ({ ...s, notify_emails: [...s.notify_emails, email] }));
+    if ((settings.notify_emails || []).includes(email)) { addToast('すでに登録されています', 'error'); return; }
+    setSettings(s => ({ ...s, notify_emails: [...(s.notify_emails || []), email] }));
     setNewEmail('');
   };
 
-  const removeEmail = (email) => setSettings(s => ({ ...s, notify_emails: s.notify_emails.filter(e => e !== email) }));
+  const removeEmail = (email) =>
+    setSettings(s => ({ ...s, notify_emails: (s.notify_emails || []).filter(e => e !== email) }));
 
   const handleSave = async () => {
     setLoading(true);
@@ -234,29 +244,91 @@ function EmailTab({ addToast }) {
 
   const handleTest = async () => {
     setTesting(true);
-    try { await api.testEmail(); addToast('テストメールを送信しました！'); }
+    try { await api.testEmail(); addToast('テストメールを送信しました！メールボックスを確認してください。'); }
     catch (err) { addToast(`送信失敗：${err.message}`, 'error'); }
     finally { setTesting(false); }
   };
 
   return (
     <>
+      {/* プロバイダー選択 */}
       <div className="card">
-        <div className="section-title">送信元アドレス（From）</div>
-        <div style={{ padding: '10px 12px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8, marginBottom: 12, fontSize: '0.8rem', color: 'var(--success)', lineHeight: 1.7 }}>
-          ✅ <b>独自ドメインなしでも送信できます</b><br />
-          空白のままにすると <code>onboarding@resend.dev</code> から送信されます。<br />
-          独自ドメインを取得した場合は、ここに認証済みアドレスを入力してください。
+        <div className="section-title">メール送信方法</div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          {[
+            { value: 'gmail', label: '📨 Gmail SMTP', sub: 'Gmailアカウントで送信（推奨・ドメイン不要）' },
+            { value: 'resend', label: '⚡ Resend API', sub: 'APIサービス経由（独自ドメイン必要）' },
+          ].map(opt => (
+            <label key={opt.value} style={{
+              flex: 1, display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer',
+              padding: '12px 14px', borderRadius: 10,
+              background: settings.provider === opt.value ? 'rgba(59,130,246,0.12)' : 'var(--card-bg)',
+              border: `1px solid ${settings.provider === opt.value ? 'var(--accent)' : 'var(--border)'}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="radio" name="provider" value={opt.value}
+                  checked={(settings.provider || 'gmail') === opt.value}
+                  onChange={() => setField('provider', opt.value)}
+                  style={{ width: 'auto', margin: 0 }} />
+                <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{opt.label}</span>
+              </div>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-sub)', paddingLeft: 22 }}>{opt.sub}</span>
+            </label>
+          ))}
         </div>
-        <input type="email" value={settings.from}
-          onChange={e => setSettings(s => ({ ...s, from: e.target.value }))}
-          placeholder="空白 = onboarding@resend.dev を使用（ドメイン不要）" />
       </div>
 
+      {/* Gmail設定 */}
+      {(settings.provider || 'gmail') === 'gmail' && (
+        <div className="card">
+          <div className="section-title">Gmail アカウント設定</div>
+          <div style={{ padding: '10px 12px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8, marginBottom: 14, fontSize: '0.8rem', color: 'var(--success)', lineHeight: 1.7 }}>
+            ✅ <b>ドメイン不要・Gmailアカウントだけで送信できます</b><br />
+            送信元は入力したGmailアドレスになります
+          </div>
+          <div className="form-group">
+            <label>Gmailアドレス *</label>
+            <input type="email"
+              value={settings.gmail_user || ''}
+              onChange={e => setField('gmail_user', e.target.value)}
+              placeholder="your-account@gmail.com" />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>アプリパスワード * <span style={{ color: 'var(--text-sub)', fontWeight: 400 }}>（16文字）</span></label>
+            <input type="password"
+              value={settings.gmail_app_password || ''}
+              onChange={e => setField('gmail_app_password', e.target.value)}
+              placeholder="Googleアカウントで発行した16文字のパスワード" />
+            <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(59,130,246,0.06)', borderRadius: 6, fontSize: '0.75rem', color: 'var(--text-sub)', lineHeight: 1.8 }}>
+              📋 取得済みのアプリパスワードをここに貼り付けてください<br />
+              （スペースなしの16文字でも、スペースありでも両方OK）
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Resend設定 */}
+      {settings.provider === 'resend' && (
+        <div className="card">
+          <div className="section-title">Resend 設定</div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>送信元アドレス（From）</label>
+            <input type="email"
+              value={settings.from || ''}
+              onChange={e => setField('from', e.target.value)}
+              placeholder="空白 = onboarding@resend.dev（ドメイン不要だが送信先に制限あり）" />
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-sub)', marginTop: 6 }}>
+              Render.com 環境変数に <code>RESEND_API_KEY</code> を設定してください
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 通知先メールアドレス */}
       <div className="card">
-        <div className="section-title">管理者通知メールアドレス</div>
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', marginBottom: 12 }}>
-          案件登録・日程確定時に通知を受け取るアドレス（複数可）
+        <div className="section-title">通知先メールアドレス（管理者）</div>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', marginBottom: 12, lineHeight: 1.6 }}>
+          案件登録・日程確定時に通知を受け取るアドレス（複数登録可）
         </div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
           <input type="email" value={newEmail}
@@ -266,41 +338,21 @@ function EmailTab({ addToast }) {
             style={{ flex: 1 }} />
           <button type="button" className="btn btn-primary btn-sm" onClick={addEmail}>追加</button>
         </div>
-        {settings.notify_emails.length === 0 ? (
+        {(settings.notify_emails || []).length === 0 ? (
           <div className="text-sub" style={{ fontSize: '0.8rem' }}>通知先が登録されていません</div>
-        ) : settings.notify_emails.map(email => (
+        ) : (settings.notify_emails || []).map(email => (
           <div key={email} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
             <span style={{ fontSize: '0.88rem' }}>📧 {email}</span>
             <button className="btn btn-ghost btn-sm" onClick={() => removeEmail(email)}>削除</button>
           </div>
         ))}
-      </div>
-
-      <div className="card" style={{ background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.15)' }}>
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', lineHeight: 1.8 }}>
-          <b style={{ color: 'var(--accent-lt)' }}>📌 営業担当へのメール通知</b><br />
-          日程確定時は、管理者通知アドレスに加えて、<br />
-          「👤 メンバー」タブで各営業担当に設定したメールアドレスにも通知が届きます。
+        <div style={{ marginTop: 10, fontSize: '0.75rem', color: 'var(--text-sub)', lineHeight: 1.6 }}>
+          ※ 担当営業への通知は「👤 メンバー」タブで各営業のメールアドレスを設定してください
         </div>
       </div>
 
-      <div className="card" style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
-        <div style={{ fontSize: '0.8rem', color: 'var(--warning)', lineHeight: 1.8 }}>
-          <b>⚙️ Resend の初期設定（ドメインなし版）</b><br />
-          1. <a href="https://resend.com" target="_blank" style={{ color: 'var(--accent-lt)' }}>resend.com</a> で無料登録（クレカ不要）<br />
-          2. API Keys → Create API Key → コピー<br />
-          3. Render.com 環境変数に <code>RESEND_API_KEY</code> を追加<br />
-          4. 「送信元アドレス」は空白のままでOK<br />
-          <br />
-          <b>⚠️ ドメイン未登録時の制限</b><br />
-          ・送信元が <code>onboarding@resend.dev</code> になります<br />
-          ・Resendアカウント登録に使ったメールアドレス宛にしか送信できません<br />
-          ・そのため、通知先メールアドレスには必ずResend登録アドレスを含めてください
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
         <button className="btn btn-ghost" style={{ flex: 1 }} onClick={handleTest} disabled={testing}>
           {testing ? '送信中...' : '📨 テスト送信'}
         </button>
