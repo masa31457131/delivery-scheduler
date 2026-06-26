@@ -2,31 +2,25 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuth } from '../hooks/useAuth';
 
-const EMPTY_CANDIDATE = { date: '', time: '' };
+const EMPTY = { date: '', time: '' };
 
 export default function NewProjectPage({ onSaved, addToast }) {
   const { user } = useAuth();
   const [form, setForm] = useState({
-    client_name: '',
-    project_name: '',
+    client_name: '', project_name: '',
     sales_rep: user.role === 'sales' ? user.name : '',
-    memo: '',
-    delivery_method: 'remote',
+    memo: '', delivery_method: 'remote',
   });
-  const [candidates, setCandidates] = useState([{ ...EMPTY_CANDIDATE }]);
+  const [candidates, setCandidates] = useState([{ ...EMPTY }]);
   const [salesUsers, setSalesUsers] = useState([]);
   const [conflicts, setConflicts] = useState({});
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    api.getUsers().then(setSalesUsers);
-  }, []);
+  useEffect(() => { api.getUsers().then(setSalesUsers); }, []);
 
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const addCandidate = () => {
-    if (candidates.length < 3) setCandidates(c => [...c, { ...EMPTY_CANDIDATE }]);
-  };
+  const addCandidate = () => { if (candidates.length < 3) setCandidates(c => [...c, { ...EMPTY }]); };
 
   const removeCandidate = (i) => {
     setCandidates(c => c.filter((_, idx) => idx !== i));
@@ -38,8 +32,8 @@ export default function NewProjectPage({ onSaved, addToast }) {
     setCandidates(updated);
     const c = updated[i];
     if (c.date) {
-      const reps = await api.getConflicts(c.date, c.time || '').catch(() => []);
-      setConflicts(prev => ({ ...prev, [i]: reps }));
+      const result = await api.getConflicts(c.date, c.time || '').catch(() => ({ blocked: false, sales_reps: [] }));
+      setConflicts(prev => ({ ...prev, [i]: result }));
     }
   };
 
@@ -53,18 +47,15 @@ export default function NewProjectPage({ onSaved, addToast }) {
       onSaved();
     } catch (err) {
       addToast(err.message, 'error');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  const hasConflict = (i) => conflicts[i] && conflicts[i].length >= 2;
+  const isHardBlocked = (i) => conflicts[i]?.blocked || (conflicts[i]?.sales_reps?.length >= 2);
 
   return (
     <>
       <div className="page-title">案件を登録</div>
       <div className="page-sub">仮スケジュール（最大3件）を登録してください</div>
-
       <form onSubmit={handleSubmit}>
         <div className="card">
           <div className="section-title">基本情報</div>
@@ -93,11 +84,9 @@ export default function NewProjectPage({ onSaved, addToast }) {
           <div className="form-group">
             <label>納品方法 *</label>
             <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
-              {[
-                { value: 'remote', label: '🖥 リモート' },
-                { value: 'onsite', label: '🚗 現地訪問' },
-              ].map(opt => (
-                <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1,
+              {[{ value: 'remote', label: '🖥 リモート' }, { value: 'onsite', label: '🚗 現地訪問' }].map(opt => (
+                <label key={opt.value} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1,
                   background: form.delivery_method === opt.value ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
                   border: `1px solid ${form.delivery_method === opt.value ? 'var(--accent)' : 'var(--border)'}`,
                   borderRadius: 8, padding: '10px 14px', transition: 'all 0.15s',
@@ -121,7 +110,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
           <div className="section-title">候補日（最大3件）</div>
           <div className="candidate-list">
             {candidates.map((c, i) => (
-              <div key={i}>
+              <div key={i} style={{ marginBottom: 10 }}>
                 <div className="candidate-row">
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', minWidth: 44 }}>第{i+1}候補</div>
                   <input type="date" style={{ flex: 1 }} value={c.date} onChange={e => updateCandidate(i, 'date', e.target.value)} />
@@ -130,17 +119,21 @@ export default function NewProjectPage({ onSaved, addToast }) {
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeCandidate(i)} style={{ padding: '6px 8px', flexShrink: 0 }}>×</button>
                   )}
                 </div>
-                {conflicts[i] && conflicts[i].length > 0 && (
-                  <div style={{
-                    marginTop: 6, padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem',
-                    background: conflicts[i].length >= 2 ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.1)',
-                    border: `1px solid ${conflicts[i].length >= 2 ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)'}`,
-                    color: conflicts[i].length >= 2 ? 'var(--danger)' : 'var(--warning)',
-                  }}>
-                    {conflicts[i].length >= 2
-                      ? `⛔ この日程は既に ${conflicts[i].join('さんと ')}さんが抑えています（登録不可）`
-                      : `⚠️ ${conflicts[i][0]}さんがこの日程を仮抑えしています`}
-                  </div>
+                {conflicts[i] && (
+                  conflicts[i].blocked ? (
+                    <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)' }}>
+                      🚫 この日程は管理者により予定不可に設定されています
+                      {conflicts[i].blockedInfo?.reason ? `（${conflicts[i].blockedInfo.reason}）` : ''}
+                    </div>
+                  ) : conflicts[i].sales_reps?.length >= 2 ? (
+                    <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)' }}>
+                      ⛔ この日程は既に {conflicts[i].sales_reps.join('さんと ')}さんが抑えています（登録不可）
+                    </div>
+                  ) : conflicts[i].sales_reps?.length === 1 ? (
+                    <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: 'var(--warning)' }}>
+                      ⚠️ {conflicts[i].sales_reps[0]}さんがこの日程を仮抑えしています
+                    </div>
+                  ) : null
                 )}
               </div>
             ))}
@@ -150,13 +143,12 @@ export default function NewProjectPage({ onSaved, addToast }) {
           )}
         </div>
 
-        <button className="btn btn-primary btn-full" type="submit"
-          disabled={loading || candidates.some((_, i) => hasConflict(i))}>
+        <button className="btn btn-primary btn-full" type="submit" disabled={loading || candidates.some((_, i) => isHardBlocked(i))}>
           {loading ? '登録中...' : '案件を登録する'}
         </button>
-        {candidates.some((_, i) => hasConflict(i)) && (
+        {candidates.some((_, i) => isHardBlocked(i)) && (
           <div style={{ textAlign: 'center', color: 'var(--danger)', fontSize: '0.8rem', marginTop: 8 }}>
-            ⛔ 2名以上が抑えている候補日があるため登録できません
+            登録不可の候補日があるため登録できません
           </div>
         )}
       </form>

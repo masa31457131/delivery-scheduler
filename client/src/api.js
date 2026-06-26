@@ -25,6 +25,11 @@ export const api = {
     if (exclude_project_id) params.set('exclude_project_id', exclude_project_id);
     return req('GET', `/schedule/conflicts?${params}`);
   },
+  getBlockedDates: () => req('GET', '/blocked-dates'),
+  createBlockedDate: (data) => req('POST', '/blocked-dates', data),
+  deleteBlockedDate: (id) => req('DELETE', `/blocked-dates/${id}`),
+  getEmailSettings: () => req('GET', '/settings/email'),
+  updateEmailSettings: (data) => req('PUT', '/settings/email', data),
   getProjects: () => req('GET', '/projects'),
   getProject: (id) => req('GET', `/projects/${id}`),
   createProject: (data) => req('POST', '/projects', data),
