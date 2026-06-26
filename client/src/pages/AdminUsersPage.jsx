@@ -243,13 +243,14 @@ function EmailTab({ addToast }) {
     <>
       <div className="card">
         <div className="section-title">送信元アドレス（From）</div>
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', marginBottom: 10, lineHeight: 1.6 }}>
-          Resend で認証済みのメールアドレスを入力してください。<br />
-          例: <code style={{ color: 'var(--accent-lt)' }}>noreply@your-domain.com</code>
+        <div style={{ padding: '10px 12px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8, marginBottom: 12, fontSize: '0.8rem', color: 'var(--success)', lineHeight: 1.7 }}>
+          ✅ <b>独自ドメインなしでも送信できます</b><br />
+          空白のままにすると <code>onboarding@resend.dev</code> から送信されます。<br />
+          独自ドメインを取得した場合は、ここに認証済みアドレスを入力してください。
         </div>
         <input type="email" value={settings.from}
           onChange={e => setSettings(s => ({ ...s, from: e.target.value }))}
-          placeholder="noreply@your-domain.com" />
+          placeholder="空白 = onboarding@resend.dev を使用（ドメイン不要）" />
       </div>
 
       <div className="card">
@@ -286,11 +287,16 @@ function EmailTab({ addToast }) {
 
       <div className="card" style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
         <div style={{ fontSize: '0.8rem', color: 'var(--warning)', lineHeight: 1.8 }}>
-          <b>⚙️ Resend の初期設定</b><br />
+          <b>⚙️ Resend の初期設定（ドメインなし版）</b><br />
           1. <a href="https://resend.com" target="_blank" style={{ color: 'var(--accent-lt)' }}>resend.com</a> で無料登録（クレカ不要）<br />
           2. API Keys → Create API Key → コピー<br />
           3. Render.com 環境変数に <code>RESEND_API_KEY</code> を追加<br />
-          4. Domains でドメインを認証（送信元として使用）
+          4. 「送信元アドレス」は空白のままでOK<br />
+          <br />
+          <b>⚠️ ドメイン未登録時の制限</b><br />
+          ・送信元が <code>onboarding@resend.dev</code> になります<br />
+          ・Resendアカウント登録に使ったメールアドレス宛にしか送信できません<br />
+          ・そのため、通知先メールアドレスには必ずResend登録アドレスを含めてください
         </div>
       </div>
 
