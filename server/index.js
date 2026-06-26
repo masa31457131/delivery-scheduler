@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
 const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -18,39 +19,75 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-
 // ── Email helpers ─────────────────────────────────────────────
 async function getEmailSettings() {
   const { rows } = await pool.query("SELECT value FROM settings WHERE key='email_settings'");
-  if (!rows[0]) return { from: '', notify_emails: [] };
+  if (!rows[0]) return { provider: 'gmail', from: '', notify_emails: [], gmail_user: '', gmail_app_password: '' };
   return JSON.parse(rows[0].value);
 }
 
+// Gmail SMTP トランスポーター（呼び出しのたびに最新設定で生成）
+function createGmailTransport(gmailUser, gmailAppPassword) {
+  return nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { user: gmailUser, pass: gmailAppPassword },
+  });
+}
+
 async function sendEmail({ to, subject, html }) {
-  if (!resend) {
-    console.log('[Email skipped - RESEND_API_KEY not set]', subject);
-    return { skipped: true };
-  }
   const settings = await getEmailSettings();
-  const from = settings.from;
-  if (!from) {
-    console.log('[Email skipped - from address not configured]', subject);
-    return { skipped: true };
-  }
   const toList = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!toList.length) {
     console.log('[Email skipped - no recipients]', subject);
     return { skipped: true };
   }
-  try {
-    const result = await resend.emails.send({ from, to: toList, subject, html });
-    console.log('[Email sent]', subject, '->', toList.join(', '));
-    return result;
-  } catch (e) {
-    console.error('[Email error]', e.message, e);
-    return { error: e.message };
+
+  const provider = settings.provider || 'gmail';
+
+  // ── Gmail SMTP ──
+  if (provider === 'gmail') {
+    const { gmail_user, gmail_app_password } = settings;
+    if (!gmail_user || !gmail_app_password) {
+      console.log('[Email skipped - Gmail credentials not configured]', subject);
+      return { skipped: true };
+    }
+    try {
+      const transporter = createGmailTransport(gmail_user, gmail_app_password);
+      await transporter.sendMail({
+        from: `"納品スケジューラー" <${gmail_user}>`,
+        to: toList,
+        subject,
+        html,
+      });
+      console.log('[Gmail sent]', subject, '->', toList.join(', '));
+      return { success: true };
+    } catch (e) {
+      console.error('[Gmail error]', e.message);
+      return { error: e.message };
+    }
   }
+
+  // ── Resend ──
+  if (provider === 'resend') {
+    const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+    if (!resend) {
+      console.log('[Email skipped - RESEND_API_KEY not set]', subject);
+      return { skipped: true };
+    }
+    const from = settings.from || '納品スケジューラー <onboarding@resend.dev>';
+    try {
+      const result = await resend.emails.send({ from, to: toList, subject, html });
+      console.log('[Resend sent]', subject, '->', toList.join(', '));
+      return result;
+    } catch (e) {
+      console.error('[Resend error]', e.message);
+      return { error: e.message };
+    }
+  }
+
+  return { skipped: true };
 }
 
 // HTML メールテンプレート
@@ -250,14 +287,30 @@ app.get('/api/schedule/conflicts', async (req, res) => {
 // ── Email Settings ────────────────────────────────────────────
 app.get('/api/settings/email', async (_req, res) => {
   const settings = await getEmailSettings();
-  res.json(settings);
+  // アプリパスワードはマスクして返す
+  const safe = { ...settings };
+  if (safe.gmail_app_password) safe.gmail_app_password = '********';
+  res.json(safe);
 });
 
 app.put('/api/settings/email', async (req, res) => {
-  const { from, notify_emails } = req.body;
-  const value = JSON.stringify({ from: from || '', notify_emails: notify_emails || [] });
-  await pool.query("INSERT INTO settings (key,value) VALUES ('email_settings',$1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
-  res.json({ from, notify_emails });
+  const { provider, from, notify_emails, gmail_user, gmail_app_password } = req.body;
+  // 既存設定を取得してマージ（パスワードが '********' なら変更しない）
+  const existing = await getEmailSettings();
+  const value = JSON.stringify({
+    provider: provider || 'gmail',
+    from: from || '',
+    notify_emails: notify_emails || [],
+    gmail_user: gmail_user || '',
+    gmail_app_password: (gmail_app_password && gmail_app_password !== '********')
+      ? gmail_app_password
+      : (existing.gmail_app_password || ''),
+  });
+  await pool.query(
+    "INSERT INTO settings (key,value) VALUES ('email_settings',$1) ON CONFLICT (key) DO UPDATE SET value=$1",
+    [value]
+  );
+  res.json({ success: true });
 });
 
 // ── Email test endpoint ───────────────────────────────────────
@@ -267,13 +320,13 @@ app.post('/api/settings/email/test', async (req, res) => {
   const result = await sendEmail({
     to: settings.notify_emails,
     subject: '【テスト】納品スケジューラー メール設定確認',
-    html: makeEmailHtml('メール設定テスト', [
-      ['ステータス', '✅ メール送信成功'],
+    html: makeEmailHtml('メール設定テスト ✅', [
+      ['プロバイダー', settings.provider === 'resend' ? 'Resend' : 'Gmail SMTP'],
       ['送信先', settings.notify_emails.join(', ')],
-    ], 'このメールは設定確認のためのテスト送信です。'),
+    ], 'このメールは設定確認のためのテスト送信です。正常に届いていれば設定完了です。'),
   });
   if (result?.error) return res.status(500).json({ error: result.error });
-  if (result?.skipped) return res.status(400).json({ error: '送信元アドレスまたはAPIキーが未設定です' });
+  if (result?.skipped) return res.status(400).json({ error: 'メール設定が未完了です。GmailアカウントとAppパスワードを確認してください。' });
   res.json({ success: true });
 });
 
