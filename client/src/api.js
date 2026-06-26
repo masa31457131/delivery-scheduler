@@ -20,20 +20,23 @@ export const api = {
   updateUser: (id, data) => req('PUT', `/users/${id}`, data),
   deleteUser: (id) => req('DELETE', `/users/${id}`),
   getConflicts: (date, time, exclude_project_id) => {
-    const params = new URLSearchParams({ date });
-    if (time) params.set('time', time);
-    if (exclude_project_id) params.set('exclude_project_id', exclude_project_id);
-    return req('GET', `/schedule/conflicts?${params}`);
+    const p = new URLSearchParams({ date });
+    if (time) p.set('time', time);
+    if (exclude_project_id) p.set('exclude_project_id', exclude_project_id);
+    return req('GET', `/schedule/conflicts?${p}`);
   },
   getBlockedDates: () => req('GET', '/blocked-dates'),
   createBlockedDate: (data) => req('POST', '/blocked-dates', data),
   deleteBlockedDate: (id) => req('DELETE', `/blocked-dates/${id}`),
   getEmailSettings: () => req('GET', '/settings/email'),
   updateEmailSettings: (data) => req('PUT', '/settings/email', data),
+  testEmail: () => req('POST', '/settings/email/test'),
   getProjects: () => req('GET', '/projects'),
   getProject: (id) => req('GET', `/projects/${id}`),
   createProject: (data) => req('POST', '/projects', data),
   updateProject: (id, data) => req('PUT', `/projects/${id}`, data),
+  addCandidate: (projectId, data) => req('POST', `/projects/${projectId}/candidates`, data),
+  deleteCandidate: (projectId, candidateId) => req('DELETE', `/projects/${projectId}/candidates/${candidateId}`),
   confirmProject: (id, data) => req('POST', `/projects/${id}/confirm`, data),
   deleteProject: (id) => req('DELETE', `/projects/${id}`),
   getStats: () => req('GET', '/stats'),
