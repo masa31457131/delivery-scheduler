@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { Resend } = require('resend');
 const nodemailer = require('nodemailer');
+// MailerSend は fetch（Node18標準）で呼ぶ — 追加パッケージ不要
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -126,11 +127,12 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS projects (
         id              TEXT PRIMARY KEY,
         client_name     TEXT NOT NULL,
-        project_name    TEXT NOT NULL,
+        project_type    TEXT NOT NULL DEFAULT '新規納品',
         sales_rep       TEXT NOT NULL,
         status          TEXT NOT NULL DEFAULT 'pending',
         memo            TEXT DEFAULT '',
         delivery_method TEXT DEFAULT 'remote',
+        candidate_days  INTEGER DEFAULT 1,
         confirmed_date  TEXT,
         created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -158,6 +160,8 @@ async function initDB() {
 
     // Migrations
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS delivery_method TEXT DEFAULT 'remote'`);
+    await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_type TEXT DEFAULT '新規納品'`);
+    await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS candidate_days INTEGER DEFAULT 1`);
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT ''`);
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
@@ -383,9 +387,9 @@ app.post('/api/projects', async (req, res) => {
     ).join('<br>') || 'なし';
     await sendEmail({
       to: settings.notify_emails,
-      subject: `【新規案件登録】${project_name}（${client_name}）`,
+      subject: `【新規案件登録】${project_type}（${client_name}）`,
       html: makeEmailHtml('新しい案件が登録されました', [
-        ['案件名', `<b>${project_name}</b>`],
+        ['案件内容', `<b>${project_type}</b>`],
         ['顧客名', client_name],
         ['担当営業', sales_rep],
         ['納品方法', deliveryLabel],
@@ -503,9 +507,9 @@ app.post('/api/projects/:id/confirm', async (req, res) => {
   if (allTo.length) {
     await sendEmail({
       to: allTo,
-      subject: `【納品日確定】${p.project_name}（${p.client_name}）`,
+      subject: `【納品日確定】${p.project_type}（${p.client_name}）`,
       html: makeEmailHtml('納品日程が確定しました', [
-        ['案件名', `<b>${p.project_name}</b>`],
+        ['案件内容', `<b>${p.project_type}</b>`],
         ['顧客名', p.client_name],
         ['担当営業', p.sales_rep],
         ['納品方法', deliveryLabel],
