@@ -1,13 +1,13 @@
 export const STATUS_MAP = {
-  draft:     { label: '下書き',   cls: 'badge-draft' },
-  pending:   { label: '承認待ち', cls: 'badge-pending' },
-  confirmed: { label: '日程確定', cls: 'badge-confirmed' },
-  delivered: { label: '納品済み', cls: 'badge-delivered' },
-  cancelled: { label: 'キャンセル', cls: 'badge-cancelled' },
+  pending:   { label: '候補日待ち',  cls: 'badge-pending' },
+  scheduled: { label: '仮スケ設定済', cls: 'badge-confirmed' },
+  confirmed: { label: '日程確定',    cls: 'badge-confirmed' },
+  delivered: { label: '納品済み',    cls: 'badge-delivered' },
+  cancelled: { label: 'キャンセル',  cls: 'badge-cancelled' },
 };
 
 export function StatusBadge({ status }) {
-  const s = STATUS_MAP[status] || STATUS_MAP.draft;
+  const s = STATUS_MAP[status] || STATUS_MAP.pending;
   return <span className={`badge ${s.cls}`}>{s.label}</span>;
 }
 

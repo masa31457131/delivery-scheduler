@@ -17,13 +17,17 @@ export default function DashboardPage({ onNavigate }) {
     ? [
         { key: 'mine',      label: '自分の案件' },
         { key: 'all',       label: '全メンバー' },
-        { key: 'pending',   label: '承認待ち' },
+        { key: 'pending',   label: '候補日待ち' },
+        { key: 'scheduled',  label: '仮スケ設定済' },
         { key: 'confirmed', label: '確定済み' },
+        { key: 'cancelled', label: 'キャンセル' },
       ]
     : [
         { key: 'all',       label: 'すべて' },
-        { key: 'pending',   label: '承認待ち' },
+        { key: 'pending',   label: '候補日待ち' },
+        { key: 'scheduled',  label: '仮スケ設定済' },
         { key: 'confirmed', label: '確定済み' },
+        { key: 'cancelled', label: 'キャンセル' },
         { key: 'delivered', label: '納品済み' },
       ];
 
@@ -49,9 +53,9 @@ export default function DashboardPage({ onNavigate }) {
       {user.role === 'admin' && (
         <div className="stats-grid">
           <div className="stat-card"><div className="stat-value">{stats.total ?? '—'}</div><div className="stat-label">総案件数</div></div>
-          <div className="stat-card"><div className="stat-value" style={{ color: 'var(--warning)' }}>{stats.pending ?? '—'}</div><div className="stat-label">承認待ち</div></div>
-          <div className="stat-card"><div className="stat-value" style={{ color: 'var(--accent-lt)' }}>{stats.confirmed ?? '—'}</div><div className="stat-label">確定済み</div></div>
-          <div className="stat-card"><div className="stat-value" style={{ color: 'var(--success)' }}>{stats.delivered ?? '—'}</div><div className="stat-label">納品済み</div></div>
+          <div className="stat-card"><div className="stat-value" style={{ color: 'var(--warning)' }}>{stats.pending ?? '—'}</div><div className="stat-label">候補日待ち</div></div>
+          <div className="stat-card"><div className="stat-value" style={{ color: 'var(--accent-lt)' }}>{stats.scheduled ?? '—'}</div><div className="stat-label">仮スケ設定済</div></div>
+          <div className="stat-card"><div className="stat-value" style={{ color: 'var(--success)' }}>{stats.confirmed ?? '—'}</div><div className="stat-label">確定済み</div></div>
         </div>
       )}
 

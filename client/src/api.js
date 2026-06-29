@@ -37,7 +37,12 @@ export const api = {
   updateProject: (id, data) => req('PUT', `/projects/${id}`, data),
   addCandidate: (projectId, data) => req('POST', `/projects/${projectId}/candidates`, data),
   deleteCandidate: (projectId, candidateId) => req('DELETE', `/projects/${projectId}/candidates/${candidateId}`),
-  confirmProject: (id, data) => req('POST', `/projects/${id}/confirm`, data),
+  // 営業が仮スケジュールを確定
+  confirmSchedule: (id, data) => req('POST', `/projects/${id}/confirm-schedule`, data),
+  // キャンセル（理由必須）
+  cancelProject: (id, data) => req('POST', `/projects/${id}/cancel`, data),
+  // リマインドメール送信
+  sendReminder: (id) => req('POST', `/projects/${id}/remind`),
   deleteProject: (id) => req('DELETE', `/projects/${id}`),
   getStats: () => req('GET', '/stats'),
 };
