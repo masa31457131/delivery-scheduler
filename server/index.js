@@ -132,6 +132,8 @@ async function initDB() {
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_type TEXT DEFAULT '新規納品'`);
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS candidate_days INTEGER DEFAULT 1`);
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT ''`);
+    // project_name の NOT NULL 制約を削除（project_type に移行済みのため）
+    await client.query(`ALTER TABLE projects ALTER COLUMN project_name DROP NOT NULL`).catch(() => {});
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
     if (parseInt(rows[0].c) === 0) {
