@@ -5,20 +5,27 @@ import { StatusBadge, formatDate, relativeTime } from '../components/StatusBadge
 
 const DELIVERY_ICONS = { remote: '🖥', onsite: '🚗' };
 
-const FILTERS = [
-  { key: 'all', label: 'すべて' },
-  { key: 'mine', label: '自分の案件' },
-  { key: 'pending', label: '承認待ち' },
-  { key: 'confirmed', label: '確定済み' },
-  { key: 'delivered', label: '納品済み' },
-];
-
 export default function DashboardPage({ onNavigate }) {
   const { user } = useAuth();
+  // 営業はデフォルト「mine」、管理者は「all」
+  const [filter, setFilter] = useState(user.role === 'sales' ? 'mine' : 'all');
   const [projects, setProjects] = useState([]);
   const [stats, setStats] = useState({});
-  const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
+
+  const FILTERS = user.role === 'sales'
+    ? [
+        { key: 'mine',      label: '自分の案件' },
+        { key: 'all',       label: '全メンバー' },
+        { key: 'pending',   label: '承認待ち' },
+        { key: 'confirmed', label: '確定済み' },
+      ]
+    : [
+        { key: 'all',       label: 'すべて' },
+        { key: 'pending',   label: '承認待ち' },
+        { key: 'confirmed', label: '確定済み' },
+        { key: 'delivered', label: '納品済み' },
+      ];
 
   useEffect(() => {
     Promise.all([api.getProjects(), api.getStats()])
@@ -27,15 +34,17 @@ export default function DashboardPage({ onNavigate }) {
   }, []);
 
   const filtered = projects.filter(p => {
-    if (filter === 'mine') return p.sales_rep === user.name;
-    if (filter === 'all') return true;
+    if (filter === 'mine')      return p.sales_rep === user.name;
+    if (filter === 'all')       return true;
     return p.status === filter;
   });
 
   return (
     <>
       <div className="page-title">ダッシュボード</div>
-      <div className="page-sub">全案件一覧</div>
+      <div className="page-sub">
+        {filter === 'mine' ? `${user.name}の案件` : '案件一覧'}
+      </div>
 
       {user.role === 'admin' && (
         <div className="stats-grid">
@@ -66,27 +75,96 @@ export default function DashboardPage({ onNavigate }) {
         </div>
       ) : (
         filtered.map(project => (
-          <div key={project.id} className="card" onClick={() => onNavigate('detail', project.id)} style={{ cursor: 'pointer' }}>
-            <div className="card-header">
-              <div>
-                <div className="project-name">{project.project_name}</div>
-                <div className="client-name">{project.client_name}</div>
-              </div>
-              <StatusBadge status={project.status} />
-            </div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <span>👤 {project.sales_rep}</span>
-              <span>{DELIVERY_ICONS[project.delivery_method] || ''} {project.delivery_method === 'onsite' ? '現地訪問' : 'リモート'}</span>
-              {project.confirmed_date
-                ? <span>📅 {formatDate(project.confirmed_date)}</span>
-                : project.candidates?.length > 0
-                  ? <span>🗓 候補日 {project.candidates.length}件</span>
-                  : null}
-              <span style={{ marginLeft: 'auto' }}>{relativeTime(project.updated_at)}</span>
-            </div>
-          </div>
+          <ProjectCard key={project.id} project={project} onNavigate={onNavigate} />
         ))
       )}
     </>
+  );
+}
+
+// ── 案件カード（候補日をインライン表示）──────────────────────
+function ProjectCard({ project, onNavigate }) {
+  const hasCandidates = project.candidates?.length > 0;
+  const hasConfirmed  = !!project.confirmed_date;
+
+  return (
+    <div
+      className="card"
+      onClick={() => onNavigate('detail', project.id)}
+      style={{ cursor: 'pointer' }}
+    >
+      {/* タイトル行 */}
+      <div className="card-header">
+        <div>
+          <div className="project-name">{project.project_type || '—'}</div>
+          <div className="client-name">{project.client_name}</div>
+        </div>
+        <StatusBadge status={project.status} />
+      </div>
+
+      {/* メタ情報 */}
+      <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+        <span>👤 {project.sales_rep}</span>
+        <span>
+          {DELIVERY_ICONS[project.delivery_method] || ''}
+          {project.delivery_method === 'onsite' ? ' 現地訪問' : ' リモート'}
+        </span>
+        <span style={{ marginLeft: 'auto' }}>{relativeTime(project.updated_at)}</span>
+      </div>
+
+      {/* 確定日 */}
+      {hasConfirmed && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+          borderRadius: 8, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)',
+        }}>
+          <span>✅</span>
+          <div>
+            <div style={{ fontSize: '0.68rem', color: 'var(--success)', marginBottom: 1 }}>確定日</div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--success)' }}>
+              {formatDate(project.confirmed_date)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 候補日一覧（仮スケジュール段階） */}
+      {hasCandidates && !hasConfirmed && (
+        <div>
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-sub)', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 6 }}>
+            候補日
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {project.candidates.map((c, i) => (
+              <div key={c.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+                borderRadius: 6, background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.15)',
+              }}>
+                <span style={{ fontSize: '0.7rem', color: 'var(--accent-lt)', fontWeight: 700, minWidth: 42 }}>
+                  第{i + 1}候補
+                </span>
+                <span style={{ fontSize: '0.86rem', color: 'var(--text)' }}>
+                  {formatDate(c.candidate_date)}
+                  {c.candidate_time && (
+                    <span style={{ color: 'var(--text-sub)', marginLeft: 8 }}>{c.candidate_time}</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 候補日未設定 → 希望日数を表示 */}
+      {!hasCandidates && !hasConfirmed && (
+        <div style={{
+          padding: '6px 10px', borderRadius: 6,
+          background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)',
+          fontSize: '0.8rem', color: 'var(--warning)',
+        }}>
+          🗓 候補日の設定待ち（希望：{project.candidate_days || 1}日）
+        </div>
+      )}
+    </div>
   );
 }

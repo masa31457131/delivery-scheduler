@@ -134,7 +134,7 @@ export default function CalendarPage({ onNavigate }) {
               style={{ padding: '10px 0', cursor: 'pointer', borderBottom: i < selectedEntries.length-1 ? '1px solid var(--border)' : 'none' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{p.project_name}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{p.project_type || p.project_name}</div>
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', marginTop: 2 }}>
                     {p.client_name}
                   </div>

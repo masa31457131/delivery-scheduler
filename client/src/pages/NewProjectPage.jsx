@@ -2,47 +2,35 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuth } from '../hooks/useAuth';
 
-const EMPTY = { date: '', time: '' };
+const PROJECT_TYPES = ['新規納品', '増設納品', 'PC入替え', 'I/O機器納品', '打合せ', '調査'];
 
 export default function NewProjectPage({ onSaved, addToast }) {
   const { user } = useAuth();
   const [form, setForm] = useState({
-    client_name: '', project_name: '',
+    client_name: '',
+    project_type: '',
     sales_rep: user.role === 'sales' ? user.name : '',
-    memo: '', delivery_method: 'remote',
+    memo: '',
+    delivery_method: 'remote',
+    candidate_days: 1,
   });
-  const [candidates, setCandidates] = useState([{ ...EMPTY }]);
   const [salesUsers, setSalesUsers] = useState([]);
-  const [conflicts, setConflicts] = useState({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => { api.getUsers().then(setSalesUsers); }, []);
 
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const addCandidate = () => { if (candidates.length < 3) setCandidates(c => [...c, { ...EMPTY }]); };
-
-  const removeCandidate = (i) => {
-    setCandidates(c => c.filter((_, idx) => idx !== i));
-    setConflicts(prev => { const n = { ...prev }; delete n[i]; return n; });
-  };
-
-  const updateCandidate = async (i, k, v) => {
-    const updated = candidates.map((x, idx) => idx === i ? { ...x, [k]: v } : x);
-    setCandidates(updated);
-    const c = updated[i];
-    if (c.date) {
-      const result = await api.getConflicts(c.date, c.time || '').catch(() => ({ blocked: false, sales_reps: [] }));
-      setConflicts(prev => ({ ...prev, [i]: result }));
-    }
+  const handleMemo = (v) => {
+    if (v.length <= 30) setField('memo', v);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const validCandidates = candidates.filter(c => c.date);
+    if (!form.project_type) { addToast('案件内容を選択してください', 'error'); return; }
     setLoading(true);
     try {
-      await api.createProject({ ...form, candidates: validCandidates });
+      await api.createProject({ ...form, candidates: [] });
       addToast('案件を登録しました');
       onSaved();
     } catch (err) {
@@ -50,23 +38,51 @@ export default function NewProjectPage({ onSaved, addToast }) {
     } finally { setLoading(false); }
   };
 
-  const isHardBlocked = (i) => conflicts[i]?.blocked || (conflicts[i]?.sales_reps?.length >= 2);
+  const memoLen = form.memo.length;
 
   return (
     <>
       <div className="page-title">案件を登録</div>
-      <div className="page-sub">仮スケジュール（最大3件）を登録してください</div>
+      <div className="page-sub">内容を入力して希望日数を選択してください</div>
+
       <form onSubmit={handleSubmit}>
+        {/* 基本情報 */}
         <div className="card">
           <div className="section-title">基本情報</div>
+
           <div className="form-group">
             <label>顧客名 *</label>
-            <input value={form.client_name} onChange={e => setField('client_name', e.target.value)} placeholder="株式会社〇〇" required />
+            <input
+              value={form.client_name}
+              onChange={e => setField('client_name', e.target.value)}
+              placeholder="株式会社〇〇"
+              required
+            />
           </div>
+
           <div className="form-group">
-            <label>案件名 *</label>
-            <input value={form.project_name} onChange={e => setField('project_name', e.target.value)} placeholder="Webサイトリニューアル" required />
+            <label>案件内容 *</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 4 }}>
+              {PROJECT_TYPES.map(type => (
+                <label key={type} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  cursor: 'pointer', padding: '10px 12px', borderRadius: 8,
+                  background: form.project_type === type ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
+                  border: `1px solid ${form.project_type === type ? 'var(--accent)' : 'var(--border)'}`,
+                  transition: 'all 0.15s',
+                }}>
+                  <input
+                    type="radio" name="project_type" value={type}
+                    checked={form.project_type === type}
+                    onChange={() => setField('project_type', type)}
+                    style={{ width: 'auto', margin: 0 }}
+                  />
+                  <span style={{ fontSize: '0.88rem' }}>{type}</span>
+                </label>
+              ))}
+            </div>
           </div>
+
           {user.role === 'admin' ? (
             <div className="form-group">
               <label>担当営業 *</label>
@@ -81,6 +97,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
               <input value={user.name} disabled style={{ opacity: 0.6 }} />
             </div>
           )}
+
           <div className="form-group">
             <label>納品方法 *</label>
             <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
@@ -93,64 +110,72 @@ export default function NewProjectPage({ onSaved, addToast }) {
                 }}>
                   <input type="radio" name="delivery_method" value={opt.value}
                     checked={form.delivery_method === opt.value}
-                    onChange={e => setField('delivery_method', e.target.value)}
-                    style={{ width: 'auto' }} />
+                    onChange={() => setField('delivery_method', opt.value)}
+                    style={{ width: 'auto', margin: 0 }} />
                   <span style={{ fontSize: '0.9rem' }}>{opt.label}</span>
                 </label>
               ))}
             </div>
           </div>
+
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label>メモ・備考</label>
-            <textarea value={form.memo} onChange={e => setField('memo', e.target.value)} placeholder="顧客の要望、注意事項など" />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <label style={{ margin: 0 }}>備考</label>
+              <span style={{
+                fontSize: '0.75rem', fontWeight: 600,
+                color: memoLen >= 25 ? (memoLen >= 30 ? 'var(--danger)' : 'var(--warning)') : 'var(--text-sub)',
+              }}>
+                {memoLen} / 30文字
+              </span>
+            </div>
+            <input
+              value={form.memo}
+              onChange={e => handleMemo(e.target.value)}
+              placeholder="簡潔に記載（30文字以内）"
+              maxLength={30}
+            />
           </div>
         </div>
 
+        {/* 希望候補日数 */}
         <div className="card">
-          <div className="section-title">候補日（最大3件）</div>
-          <div className="candidate-list">
-            {candidates.map((c, i) => (
-              <div key={i} style={{ marginBottom: 10 }}>
-                <div className="candidate-row">
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', minWidth: 44 }}>第{i+1}候補</div>
-                  <input type="date" style={{ flex: 1 }} value={c.date} onChange={e => updateCandidate(i, 'date', e.target.value)} />
-                  <input type="time" className="time-input" value={c.time} onChange={e => updateCandidate(i, 'time', e.target.value)} />
-                  {candidates.length > 1 && (
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeCandidate(i)} style={{ padding: '6px 8px', flexShrink: 0 }}>×</button>
-                  )}
-                </div>
-                {conflicts[i] && (
-                  conflicts[i].blocked ? (
-                    <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)' }}>
-                      🚫 この日程は管理者により予定不可に設定されています
-                      {conflicts[i].blockedInfo?.reason ? `（${conflicts[i].blockedInfo.reason}）` : ''}
-                    </div>
-                  ) : conflicts[i].sales_reps?.length >= 2 ? (
-                    <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)' }}>
-                      ⛔ この日程は既に {conflicts[i].sales_reps.join('さんと ')}さんが抑えています（登録不可）
-                    </div>
-                  ) : conflicts[i].sales_reps?.length === 1 ? (
-                    <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: 'var(--warning)' }}>
-                      ⚠️ {conflicts[i].sales_reps[0]}さんがこの日程を仮抑えしています
-                    </div>
-                  ) : null
-                )}
-              </div>
+          <div className="section-title">希望候補日数</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-sub)', marginBottom: 14, lineHeight: 1.6 }}>
+            管理者がカレンダーを確認し、何日分の候補日を設定してほしいですか？
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            {[1, 2, 3].map(n => (
+              <label key={n} style={{
+                flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                gap: 6, cursor: 'pointer', padding: '18px 8px', borderRadius: 12,
+                background: form.candidate_days === n ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
+                border: `2px solid ${form.candidate_days === n ? 'var(--accent)' : 'var(--border)'}`,
+                transition: 'all 0.15s',
+              }}>
+                <input type="radio" name="candidate_days" value={n}
+                  checked={form.candidate_days === n}
+                  onChange={() => setField('candidate_days', n)}
+                  style={{ display: 'none' }} />
+                <span style={{
+                  fontSize: '2.2rem', fontWeight: 700, lineHeight: 1,
+                  color: form.candidate_days === n ? 'var(--accent)' : 'var(--text)',
+                }}>{n}</span>
+                <span style={{ fontSize: '0.82rem', color: 'var(--text-sub)' }}>日</span>
+              </label>
             ))}
           </div>
-          {candidates.length < 3 && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={addCandidate} style={{ marginTop: 10 }}>+ 候補日を追加</button>
-          )}
+          <div style={{ marginTop: 10, fontSize: '0.75rem', color: 'var(--text-sub)', lineHeight: 1.6 }}>
+            ※ 管理者がスケジュールを確認し、候補日を設定します
+          </div>
         </div>
 
-        <button className="btn btn-primary btn-full" type="submit" disabled={loading || candidates.some((_, i) => isHardBlocked(i))}>
-          {loading ? '登録中...' : '案件を登録する'}
+        <button
+          className="btn btn-primary btn-full"
+          type="submit"
+          disabled={loading || !form.project_type || !form.client_name}
+        >
+          {loading ? '登録中...' : '依頼を送信する'}
         </button>
-        {candidates.some((_, i) => isHardBlocked(i)) && (
-          <div style={{ textAlign: 'center', color: 'var(--danger)', fontSize: '0.8rem', marginTop: 8 }}>
-            登録不可の候補日があるため登録できません
-          </div>
-        )}
       </form>
     </>
   );

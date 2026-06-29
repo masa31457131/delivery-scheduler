@@ -10,7 +10,6 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  // 候補日追加フォーム
   const [showAddForm, setShowAddForm] = useState(false);
   const [newCandidate, setNewCandidate] = useState({ date: '', time: '' });
   const [conflicts, setConflicts] = useState(null);
@@ -105,7 +104,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
         <StatusBadge status={project.status} />
       </div>
 
-      <div className="page-title">{project.project_name}</div>
+      <div className="page-title">{project.project_type || '—'}</div>
       <div className="page-sub">{project.client_name}</div>
 
       {project.confirmed_date && (
@@ -132,6 +131,10 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
           <div className="meta-value">{STATUS_MAP[project.status]?.label ?? project.status}</div>
         </div>
         <div className="meta-item">
+          <div className="meta-label">希望候補日数</div>
+          <div className="meta-value">{project.candidate_days || 1}日</div>
+        </div>
+        <div className="meta-item" style={{ gridColumn: '1 / -1' }}>
           <div className="meta-label">最終更新</div>
           <div className="meta-value">{formatDateTime(project.updated_at)}</div>
         </div>
@@ -139,7 +142,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
 
       {project.memo && (
         <div className="card">
-          <div className="section-title">メモ・備考</div>
+          <div className="section-title">備考</div>
           <div style={{ fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{project.memo}</div>
         </div>
       )}
@@ -155,10 +158,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
           )}
         </div>
 
-        {/* 候補日追加フォーム */}
         {showAddForm && (
           <form onSubmit={handleAddCandidate} style={{ marginBottom: 12, padding: 12, background: 'rgba(59,130,246,0.06)', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)' }}>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', marginBottom: 8 }}>候補日を追加（第{(project.candidates?.length || 0)+1}候補）</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', marginBottom: 8 }}>
+              第{(project.candidates?.length || 0) + 1}候補を追加
+            </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
               <input type="date" style={{ flex: 1 }} value={newCandidate.date}
                 onChange={e => { setNewCandidate(c => ({ ...c, date: e.target.value })); checkConflict(e.target.value, newCandidate.time); }}
@@ -183,7 +187,8 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
             )}
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setShowAddForm(false); setConflicts(null); }}>キャンセル</button>
-              <button type="submit" className="btn btn-primary btn-sm" disabled={busy || conflicts?.blocked || conflicts?.sales_reps?.length >= 2}>追加する</button>
+              <button type="submit" className="btn btn-primary btn-sm"
+                disabled={busy || conflicts?.blocked || conflicts?.sales_reps?.length >= 2}>追加する</button>
             </div>
           </form>
         )}
