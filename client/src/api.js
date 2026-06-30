@@ -28,13 +28,14 @@ export const api = {
   updateAdmin: (id, data) => req('PUT', `/admins/${id}`, data),
   deleteAdmin: (id) => req('DELETE', `/admins/${id}`),
 
-  getConflicts: (date, time, exclude_project_id) => {
+  getConflicts: (date, time, exclude_project_id, area) => {
     const p = new URLSearchParams({ date });
     if (time) p.set('time', time);
     if (exclude_project_id) p.set('exclude_project_id', exclude_project_id);
+    if (area) p.set('area', area);
     return req('GET', `/schedule/conflicts?${p}`);
   },
-  getBlockedDates: () => req('GET', '/blocked-dates'),
+  getBlockedDates: (area) => req('GET', `/blocked-dates${area ? `?area=${encodeURIComponent(area)}` : ''}`),
   createBlockedDate: (data) => req('POST', '/blocked-dates', data),
   deleteBlockedDate: (id) => req('DELETE', `/blocked-dates/${id}`),
   getEmailSettings: () => req('GET', '/settings/email'),
@@ -51,7 +52,7 @@ export const api = {
   deleteCandidate: (projectId, candidateId) => req('DELETE', `/projects/${projectId}/candidates/${candidateId}`),
   confirmSchedule: (id, data) => req('POST', `/projects/${id}/confirm-schedule`, data),
   cancelProject: (id, data) => req('POST', `/projects/${id}/cancel`, data),
-  sendReminder: (id) => req('POST', `/projects/${id}/remind`),
+  sendReminder: (id, requesterLoginId) => req('POST', `/projects/${id}/remind`, { requester_login_id: requesterLoginId }),
   deleteProject: (id) => req('DELETE', `/projects/${id}`),
   getStats: () => req('GET', '/stats'),
 };

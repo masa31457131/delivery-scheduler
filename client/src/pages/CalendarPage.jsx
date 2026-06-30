@@ -55,6 +55,18 @@ export default function CalendarPage({ onNavigate }) {
     ? salesUsers.filter(u => (u.area || '東京') === areaFilter)
     : salesUsers;
 
+  // 予定不可日に表示するエリアを決定
+  // 営業：自分のエリア / 管理者：メンバー個別指定ならそのメンバーのエリア、それ以外はareaFilter
+  const displayArea = scope === 'mine'
+    ? user.area || '東京'
+    : scope !== 'all'
+      ? (areaByName[scope] || '東京')
+      : (areaFilter !== 'all' ? areaFilter : null); // 全エリア表示時はnull（全件表示）
+
+  const visibleBlockedDates = displayArea
+    ? blockedDates.filter(b => b.area === displayArea)
+    : blockedDates;
+
   const days = getMonthDays(year, month);
   const toKey = d => d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : null;
   const today = toKey(new Date());
@@ -75,13 +87,13 @@ export default function CalendarPage({ onNavigate }) {
     }
   });
 
-  const blockedSet = new Set(blockedDates.map(b => b.date));
+  const blockedSet = new Set(visibleBlockedDates.map(b => b.date));
 
   const prevMonth = () => { if (month === 0) { setMonth(11); setYear(y => y-1); } else setMonth(m => m-1); };
   const nextMonth = () => { if (month === 11) { setMonth(0); setYear(y => y+1); } else setMonth(m => m+1); };
 
   const selectedEntries = selected ? (byDate[selected] || []) : [];
-  const selectedBlocked = selected ? blockedDates.filter(b => b.date === selected) : [];
+  const selectedBlocked = selected ? visibleBlockedDates.filter(b => b.date === selected) : [];
 
   const pageSubText = scope === 'mine'
     ? `${user.name}のスケジュール`
@@ -185,7 +197,7 @@ export default function CalendarPage({ onNavigate }) {
 
           {selectedBlocked.length > 0 && (
             <div style={{ padding: '10px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, marginBottom: 10, fontSize: '0.85rem', color: 'var(--danger)' }}>
-              🚫 予定不可日
+              🚫 予定不可日（📍 {selectedBlocked[0].area || '東京'}）
               {selectedBlocked[0].time_from && ` ${selectedBlocked[0].time_from}〜${selectedBlocked[0].time_to}`}
               {selectedBlocked[0].reason && `：${selectedBlocked[0].reason}`}
             </div>

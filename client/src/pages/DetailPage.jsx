@@ -10,6 +10,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [salesUsers, setSalesUsers] = useState([]);
 
   // 候補日追加フォーム
   const [showAddForm, setShowAddForm] = useState(false);
@@ -24,7 +25,17 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     setLoading(true);
     api.getProject(projectId).then(setProject).finally(() => setLoading(false));
   };
-  useEffect(() => { load(); }, [projectId]);
+  useEffect(() => {
+    load();
+    api.getUsers().then(setSalesUsers).catch(() => {});
+  }, [projectId]);
+
+  // 担当営業のエリアを取得（候補日の予定不可チェックに使用）
+  const projectArea = (() => {
+    if (!project) return null;
+    const u = salesUsers.find(u => u.display_name === project.sales_rep);
+    return u?.area || '東京';
+  })();
 
   // 仮スケジュール確定（営業が実行）
   const handleConfirmSchedule = async (candidate) => {
@@ -63,7 +74,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     if (!confirm('CS部管理者と自身にリマインドメールを送信しますか？')) return;
     setBusy(true);
     try {
-      await api.sendReminder(projectId);
+      await api.sendReminder(projectId, user.login_id);
       addToast('リマインドメールを送信しました');
     } catch (err) { addToast(err.message, 'error'); }
     finally { setBusy(false); }
@@ -72,7 +83,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   // 候補日の重複チェック
   const checkConflict = async (date, time) => {
     if (!date) { setConflicts(null); return; }
-    const result = await api.getConflicts(date, time, projectId).catch(() => null);
+    const result = await api.getConflicts(date, time, projectId, projectArea).catch(() => null);
     setConflicts(result);
   };
 

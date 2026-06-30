@@ -301,21 +301,22 @@ function AdminsTab({ addToast }) {
 
 function BlockedTab({ addToast }) {
   const [blocked, setBlocked] = useState([]);
-  const [form, setForm] = useState({ date: '', time_from: '', time_to: '', reason: '' });
+  const [areaFilter, setAreaFilter] = useState('東京');
+  const [form, setForm] = useState({ date: '', time_from: '', time_to: '', reason: '', area: '東京' });
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  const load = () => api.getBlockedDates().then(setBlocked);
-  useEffect(() => { load(); }, []);
+  const load = (area) => api.getBlockedDates(area).then(setBlocked);
+  useEffect(() => { load(areaFilter); }, [areaFilter]);
 
   const handleAdd = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
       await api.createBlockedDate(form);
-      addToast('予定不可日を設定しました');
-      setForm({ date: '', time_from: '', time_to: '', reason: '' });
+      addToast(`${form.area}の予定不可日を設定しました`);
+      setForm({ date: '', time_from: '', time_to: '', reason: '', area: areaFilter });
       setShowForm(false);
-      await load();
+      await load(areaFilter);
     } catch (err) { addToast(err.message, 'error'); }
     finally { setLoading(false); }
   };
@@ -324,17 +325,52 @@ function BlockedTab({ addToast }) {
     if (!confirm('この予定不可日を削除しますか？')) return;
     await api.deleteBlockedDate(id);
     addToast('削除しました');
-    await load();
+    await load(areaFilter);
+  };
+
+  const openForm = () => {
+    setForm(f => ({ ...f, area: areaFilter }));
+    setShowForm(v => !v);
   };
 
   return (
     <>
-      <button className="btn btn-primary btn-sm" style={{ marginBottom: 16 }} onClick={() => setShowForm(v => !v)}>
-        {showForm ? '▲ 閉じる' : '+ 予定不可日を追加'}
+      <div style={{ padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)', borderRadius: 8, marginBottom: 16, fontSize: '0.78rem', color: 'var(--text-sub)', lineHeight: 1.6 }}>
+        予定不可日はエリアごとに独立して管理されます。東京で予定不可でも、大阪では予定OKとして登録できます。
+      </div>
+
+      {/* エリア切り替え */}
+      <div className="filter-bar" style={{ marginBottom: 16 }}>
+        {['東京', '大阪'].map(a => (
+          <button key={a} className={`filter-chip ${areaFilter === a ? 'active' : ''}`} onClick={() => setAreaFilter(a)}>
+            📍 {a}
+          </button>
+        ))}
+      </div>
+
+      <button className="btn btn-primary btn-sm" style={{ marginBottom: 16 }} onClick={openForm}>
+        {showForm ? '▲ 閉じる' : `+ ${areaFilter}の予定不可日を追加`}
       </button>
       {showForm && (
         <div className="card" style={{ marginBottom: 16 }}>
           <form onSubmit={handleAdd}>
+            <div className="form-group">
+              <label>エリア *</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['東京', '大阪'].map(a => (
+                  <label key={a} style={{
+                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    cursor: 'pointer', padding: '10px 12px', borderRadius: 8,
+                    background: form.area === a ? 'rgba(239,68,68,0.12)' : 'var(--card-bg)',
+                    border: `1px solid ${form.area === a ? 'var(--danger)' : 'var(--border)'}`,
+                  }}>
+                    <input type="radio" name="blocked_area" value={a} checked={form.area === a}
+                      onChange={() => setForm(f => ({ ...f, area: a }))} style={{ width: 'auto', margin: 0 }} />
+                    <span style={{ fontSize: '0.88rem' }}>📍 {a}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="form-group">
               <label>日付 *</label>
               <input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} required />
@@ -354,13 +390,13 @@ function BlockedTab({ addToast }) {
               <input value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} placeholder="社内行事、定休日など" />
             </div>
             <button type="submit" className="btn btn-danger btn-sm" disabled={loading}>
-              {loading ? '設定中...' : '予定不可日を設定'}
+              {loading ? '設定中...' : `${form.area}の予定不可日を設定`}
             </button>
           </form>
         </div>
       )}
       {blocked.length === 0 ? (
-        <div className="empty-state" style={{ padding: '32px 16px' }}>予定不可日は設定されていません</div>
+        <div className="empty-state" style={{ padding: '32px 16px' }}>{areaFilter}の予定不可日は設定されていません</div>
       ) : blocked.map(b => (
         <div key={b.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ flex: 1 }}>
