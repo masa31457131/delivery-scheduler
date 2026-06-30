@@ -165,13 +165,14 @@ async function sendEmail({ to, subject, html }) {
 }
 
 // 営業担当のメールアドレスを取得（login_idで検索）
-async function getSalesEmail(loginId) {
-  const { rows } = await pool.query("SELECT email FROM users WHERE login_id=$1 AND role='sales'", [loginId]);
+// 営業担当のメールアドレスを取得（display_nameで検索。projects.sales_repはdisplay_nameを保持）
+async function getSalesEmail(displayName) {
+  const { rows } = await pool.query("SELECT email FROM users WHERE display_name=$1 AND role='sales'", [displayName]);
   return rows[0]?.email || null;
 }
-async function buildRecipients(salesLoginId) {
+async function buildRecipients(salesDisplayName) {
   const settings = await getEmailSettings();
-  const salesEmail = await getSalesEmail(salesLoginId);
+  const salesEmail = await getSalesEmail(salesDisplayName);
   return [...new Set([...(settings.notify_emails || []), ...(salesEmail ? [salesEmail] : [])])].filter(Boolean);
 }
 
@@ -228,6 +229,7 @@ async function initDB() {
         time_from  TEXT DEFAULT '',
         time_to    TEXT DEFAULT '',
         reason     TEXT DEFAULT '',
+        area       TEXT NOT NULL DEFAULT '東京',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS settings (
@@ -251,6 +253,7 @@ async function initDB() {
     await client.query(`UPDATE users SET login_id = name WHERE login_id IS NULL`);
     await client.query(`ALTER TABLE users ADD CONSTRAINT users_login_id_unique UNIQUE (login_id)`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS area TEXT DEFAULT '東京'`);
+    await client.query(`ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS area TEXT NOT NULL DEFAULT '東京'`);
     // projects.sales_rep は login_id を保持する想定（既存データは name=login_id のため互換）
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
@@ -392,17 +395,23 @@ app.delete('/api/admins/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// ── Blocked Dates ─────────────────────────────────────────────
-app.get('/api/blocked-dates', async (_req, res) => {
+// ── Blocked Dates（エリアごとに管理） ───────────────────────────
+app.get('/api/blocked-dates', async (req, res) => {
+  const { area } = req.query;
+  if (area) {
+    const { rows } = await pool.query('SELECT * FROM blocked_dates WHERE area=$1 ORDER BY date, time_from', [area]);
+    return res.json(rows);
+  }
   const { rows } = await pool.query('SELECT * FROM blocked_dates ORDER BY date, time_from');
   res.json(rows);
 });
 app.post('/api/blocked-dates', async (req, res) => {
-  const { date, time_from, time_to, reason } = req.body;
+  const { date, time_from, time_to, reason, area } = req.body;
   if (!date) return res.status(400).json({ error: '日付は必須です' });
+  if (!area) return res.status(400).json({ error: 'エリアを選択してください' });
   const id = uuidv4();
-  await pool.query('INSERT INTO blocked_dates (id,date,time_from,time_to,reason) VALUES ($1,$2,$3,$4,$5)',
-    [id, date, time_from || '', time_to || '', reason || '']);
+  await pool.query('INSERT INTO blocked_dates (id,date,time_from,time_to,reason,area) VALUES ($1,$2,$3,$4,$5,$6)',
+    [id, date, time_from || '', time_to || '', reason || '', area]);
   const { rows } = await pool.query('SELECT * FROM blocked_dates WHERE id=$1', [id]);
   res.status(201).json(rows[0]);
 });
@@ -411,11 +420,18 @@ app.delete('/api/blocked-dates/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// ── Conflict check ────────────────────────────────────────────
+// ── Conflict check（エリアを考慮） ──────────────────────────────
 app.get('/api/schedule/conflicts', async (req, res) => {
-  const { date, time, exclude_project_id } = req.query;
+  const { date, time, exclude_project_id, area } = req.query;
   if (!date) return res.status(400).json({ error: 'date required' });
-  const { rows: blocked } = await pool.query('SELECT * FROM blocked_dates WHERE date=$1', [date]);
+
+  // エリア指定がある場合はそのエリアの予定不可日のみチェック
+  const blockedQuery = area
+    ? 'SELECT * FROM blocked_dates WHERE date=$1 AND area=$2'
+    : 'SELECT * FROM blocked_dates WHERE date=$1';
+  const blockedParams = area ? [date, area] : [date];
+  const { rows: blocked } = await pool.query(blockedQuery, blockedParams);
+
   const isBlocked = blocked.some(b => {
     if (!b.time_from && !b.time_to) return true;
     if (!time) return true;
@@ -423,6 +439,7 @@ app.get('/api/schedule/conflicts', async (req, res) => {
     if (b.time_to && time > b.time_to) return false;
     return true;
   });
+
   const params = [date];
   let extra = '';
   if (time) { params.push(time); extra += ` AND (sc.candidate_time=$${params.length} OR sc.candidate_time='')`; }
@@ -633,13 +650,29 @@ app.post('/api/projects/:id/cancel', async (req, res) => {
 
 // ── リマインド ────────────────────────────────────────────────
 app.post('/api/projects/:id/remind', async (req, res) => {
+  const { requester_login_id } = req.body || {};
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
   const p = rows[0];
   const settings = await getEmailSettings();
   const salesEmail = await getSalesEmail(p.sales_rep);
-  const allTo = [...new Set([...(settings.notify_emails || []), ...(salesEmail ? [salesEmail] : [])])].filter(Boolean);
-  if (!allTo.length) return res.status(400).json({ error: '送信先メールアドレスが登録されていません' });
+
+  // リクエストを送った本人（営業 or 管理者）のメールアドレスも取得
+  let requesterEmail = null;
+  if (requester_login_id) {
+    const { rows: reqUser } = await pool.query('SELECT email FROM users WHERE login_id=$1', [requester_login_id]);
+    requesterEmail = reqUser[0]?.email || null;
+  }
+
+  const allTo = [...new Set([
+    ...(settings.notify_emails || []),
+    ...(salesEmail ? [salesEmail] : []),
+    ...(requesterEmail ? [requesterEmail] : []),
+  ])].filter(Boolean);
+
+  if (!allTo.length) {
+    return res.status(400).json({ error: '送信先メールアドレスが登録されていません。管理者設定でメールアドレスを登録してください。' });
+  }
 
   const result = await sendTemplatedEmail('reminder', allTo, {
     project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
@@ -647,8 +680,8 @@ app.post('/api/projects/:id/remind', async (req, res) => {
     created_at: p.created_at ? new Date(p.created_at).toLocaleDateString('ja-JP') : '—',
   });
   if (result?.error) return res.status(500).json({ error: result.error });
-  if (result?.skipped) return res.status(400).json({ error: 'メール設定が未完了です' });
-  res.json({ success: true });
+  if (result?.skipped) return res.status(400).json({ error: 'メール送信設定（Gmail/Resend）が未完了です' });
+  res.json({ success: true, sent_to: allTo });
 });
 
 // ── 強制キャンセルバッチ ───────────────────────────────────────
