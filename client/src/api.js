@@ -15,10 +15,19 @@ async function req(method, path, body) {
 
 export const api = {
   login: (loginId, password) => req('POST', '/auth/login', { name: loginId, password }),
+
+  // 営業
   getUsers: () => req('GET', '/users'),
   createUser: (data) => req('POST', '/users', data),
   updateUser: (id, data) => req('PUT', `/users/${id}`, data),
   deleteUser: (id) => req('DELETE', `/users/${id}`),
+
+  // 管理者（複数管理）
+  getAdmins: () => req('GET', '/admins'),
+  createAdmin: (data) => req('POST', '/admins', data),
+  updateAdmin: (id, data) => req('PUT', `/admins/${id}`, data),
+  deleteAdmin: (id) => req('DELETE', `/admins/${id}`),
+
   getConflicts: (date, time, exclude_project_id) => {
     const p = new URLSearchParams({ date });
     if (time) p.set('time', time);

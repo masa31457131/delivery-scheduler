@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { StatusBadge, formatDate } from '../components/StatusBadge';
 
 const DELIVERY_LABELS = { remote: '🖥 リモート', onsite: '🚗 現地訪問' };
+const AREAS = ['東京', '大阪'];
 
 function getMonthDays(year, month) {
   const first = new Date(year, month, 1);
@@ -25,6 +26,8 @@ export default function CalendarPage({ onNavigate }) {
   const [selected, setSelected] = useState(null);
   // 営業：'mine' のみ。管理者：'all' または営業の display_name
   const [scope, setScope] = useState(user.role === 'sales' ? 'mine' : 'all');
+  // 管理者用：エリアフィルター（デフォルトは自分のエリア）
+  const [areaFilter, setAreaFilter] = useState(user.area || '東京');
 
   useEffect(() => {
     const calls = [api.getProjects(), api.getBlockedDates()];
@@ -35,11 +38,22 @@ export default function CalendarPage({ onNavigate }) {
     });
   }, []);
 
-  const visibleProjects = scope === 'mine'
-    ? projects.filter(p => p.sales_rep === user.name)
-    : scope === 'all'
-      ? projects
-      : projects.filter(p => p.sales_rep === scope); // 管理者がメンバー個別指定
+  const areaByName = {};
+  salesUsers.forEach(u => { areaByName[u.display_name] = u.area || '東京'; });
+
+  const visibleProjects = projects.filter(p => {
+    if (scope === 'mine') return p.sales_rep === user.name;
+    if (scope !== 'all') return p.sales_rep === scope; // 管理者のメンバー個別指定
+    // scope === 'all'：管理者のエリア絞り込みを適用
+    if (user.role === 'admin' && areaFilter !== 'all') {
+      return (areaByName[p.sales_rep] || '東京') === areaFilter;
+    }
+    return true;
+  });
+
+  const visibleSalesUsers = user.role === 'admin' && areaFilter !== 'all'
+    ? salesUsers.filter(u => (u.area || '東京') === areaFilter)
+    : salesUsers;
 
   const days = getMonthDays(year, month);
   const toKey = d => d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : null;
@@ -69,26 +83,46 @@ export default function CalendarPage({ onNavigate }) {
   const selectedEntries = selected ? (byDate[selected] || []) : [];
   const selectedBlocked = selected ? blockedDates.filter(b => b.date === selected) : [];
 
+  const pageSubText = scope === 'mine'
+    ? `${user.name}のスケジュール`
+    : scope === 'all'
+      ? (areaFilter === 'all' ? '全エリアのスケジュール' : `${areaFilter}エリアのスケジュール`)
+      : `${scope}のスケジュール`;
+
   return (
     <>
       <div className="page-title">カレンダー</div>
-      <div className="page-sub">
-        {scope === 'mine' ? `${user.name}のスケジュール` : scope === 'all' ? '全メンバーのスケジュール' : `${scope}のスケジュール`}
-      </div>
+      <div className="page-sub">{pageSubText}</div>
 
       {user.role === 'sales' ? (
         <div className="filter-bar" style={{ marginBottom: 16 }}>
           <button className="filter-chip active">自分の案件</button>
         </div>
       ) : (
-        <div className="filter-bar" style={{ marginBottom: 16 }}>
-          <button className={`filter-chip ${scope === 'all' ? 'active' : ''}`} onClick={() => setScope('all')}>👥 全メンバー</button>
-          {salesUsers.map(u => (
-            <button key={u.id} className={`filter-chip ${scope === u.display_name ? 'active' : ''}`} onClick={() => setScope(u.display_name)}>
-              {u.display_name}
+        <>
+          {/* エリア切り替え */}
+          <div className="filter-bar" style={{ marginBottom: 10 }}>
+            {AREAS.map(a => (
+              <button key={a} className={`filter-chip ${areaFilter === a ? 'active' : ''}`}
+                onClick={() => { setAreaFilter(a); setScope('all'); }}>
+                📍 {a}
+              </button>
+            ))}
+            <button className={`filter-chip ${areaFilter === 'all' ? 'active' : ''}`}
+              onClick={() => { setAreaFilter('all'); setScope('all'); }}>
+              🌐 全エリア
             </button>
-          ))}
-        </div>
+          </div>
+          {/* メンバー切り替え */}
+          <div className="filter-bar" style={{ marginBottom: 16 }}>
+            <button className={`filter-chip ${scope === 'all' ? 'active' : ''}`} onClick={() => setScope('all')}>👥 全メンバー</button>
+            {visibleSalesUsers.map(u => (
+              <button key={u.id} className={`filter-chip ${scope === u.display_name ? 'active' : ''}`} onClick={() => setScope(u.display_name)}>
+                {u.display_name}
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>

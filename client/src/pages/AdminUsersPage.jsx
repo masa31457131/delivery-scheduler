@@ -9,6 +9,7 @@ export default function AdminUsersPage({ addToast }) {
       <div className="filter-bar" style={{ marginBottom: 20 }}>
         {[
           { key: 'users',     label: '👤 メンバー' },
+          { key: 'admins',    label: '🔑 管理者' },
           { key: 'blocked',   label: '🚫 予定不可日' },
           { key: 'email',     label: '📧 メール設定' },
           { key: 'templates', label: '✏️ メール文面' },
@@ -19,6 +20,7 @@ export default function AdminUsersPage({ addToast }) {
         ))}
       </div>
       {tab === 'users'     && <UsersTab addToast={addToast} />}
+      {tab === 'admins'    && <AdminsTab addToast={addToast} />}
       {tab === 'blocked'   && <BlockedTab addToast={addToast} />}
       {tab === 'email'     && <EmailTab addToast={addToast} />}
       {tab === 'templates' && <TemplatesTab addToast={addToast} />}
@@ -31,21 +33,21 @@ function UsersTab({ addToast }) {
   const [users, setUsers] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
-  const [form, setForm] = useState({ display_name: '', login_id: '', password: '', email: '' });
+  const [form, setForm] = useState({ display_name: '', login_id: '', password: '', email: '', area: '東京' });
   const [loading, setLoading] = useState(false);
 
   const load = () => api.getUsers().then(setUsers);
   useEffect(() => { load(); }, []);
 
-  const openAdd = () => { setEditTarget(null); setForm({ display_name: '', login_id: '', password: '', email: '' }); setShowForm(true); };
-  const openEdit = (u) => { setEditTarget(u); setForm({ display_name: u.display_name, login_id: u.login_id, password: '', email: u.email || '' }); setShowForm(true); };
+  const openAdd = () => { setEditTarget(null); setForm({ display_name: '', login_id: '', password: '', email: '', area: '東京' }); setShowForm(true); };
+  const openEdit = (u) => { setEditTarget(u); setForm({ display_name: u.display_name, login_id: u.login_id, password: '', email: u.email || '', area: u.area || '東京' }); setShowForm(true); };
   const closeForm = () => { setShowForm(false); setEditTarget(null); };
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
       if (editTarget) {
-        const payload = { display_name: form.display_name, login_id: form.login_id, email: form.email };
+        const payload = { display_name: form.display_name, login_id: form.login_id, email: form.email, area: form.area };
         if (form.password) payload.password = form.password;
         await api.updateUser(editTarget.id, payload);
         addToast('更新しました');
@@ -101,6 +103,23 @@ function UsersTab({ addToast }) {
                   onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                   placeholder="yamada@example.com" />
               </div>
+              <div className="form-group">
+                <label>エリア *</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['東京', '大阪'].map(a => (
+                    <label key={a} style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      cursor: 'pointer', padding: '10px 12px', borderRadius: 8,
+                      background: form.area === a ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
+                      border: `1px solid ${form.area === a ? 'var(--accent)' : 'var(--border)'}`,
+                    }}>
+                      <input type="radio" name="area" value={a} checked={form.area === a}
+                        onChange={() => setForm(f => ({ ...f, area: a }))} style={{ width: 'auto', margin: 0 }} />
+                      <span style={{ fontSize: '0.88rem' }}>📍 {a}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={closeForm}>キャンセル</button>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={loading}>
@@ -121,7 +140,12 @@ function UsersTab({ addToast }) {
             {u.display_name?.slice(-1) || '?'}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 600 }}>{u.display_name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontWeight: 600 }}>{u.display_name}</span>
+              <span style={{ fontSize: '0.68rem', padding: '1px 7px', borderRadius: 99, background: 'rgba(59,130,246,0.15)', color: 'var(--accent-lt)' }}>
+                📍 {u.area || '東京'}
+              </span>
+            </div>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-sub)', fontFamily: 'monospace' }}>
               ID: {u.login_id}
             </div>
@@ -138,6 +162,143 @@ function UsersTab({ addToast }) {
 }
 
 // ── 予定不可日管理 ────────────────────────────────────────────
+// ── 管理者管理（複数管理者・エリア設定）────────────────────────
+function AdminsTab({ addToast }) {
+  const [admins, setAdmins] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [form, setForm] = useState({ display_name: '', login_id: '', password: '', email: '', area: '東京' });
+  const [loading, setLoading] = useState(false);
+
+  const load = () => api.getAdmins().then(setAdmins);
+  useEffect(() => { load(); }, []);
+
+  const openAdd = () => { setEditTarget(null); setForm({ display_name: '', login_id: '', password: '', email: '', area: '東京' }); setShowForm(true); };
+  const openEdit = (a) => { setEditTarget(a); setForm({ display_name: a.display_name, login_id: a.login_id, password: '', email: a.email || '', area: a.area || '東京' }); setShowForm(true); };
+  const closeForm = () => { setShowForm(false); setEditTarget(null); };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      if (editTarget) {
+        const payload = { display_name: form.display_name, login_id: form.login_id, email: form.email, area: form.area };
+        if (form.password) payload.password = form.password;
+        await api.updateAdmin(editTarget.id, payload);
+        addToast('管理者情報を更新しました');
+      } else {
+        await api.createAdmin(form);
+        addToast('管理者を追加しました');
+      }
+      await load(); closeForm();
+    } catch (err) { addToast(err.message, 'error'); }
+    finally { setLoading(false); }
+  };
+
+  const handleDelete = async (a) => {
+    if (!confirm(`管理者「${a.display_name}」を削除しますか？`)) return;
+    try { await api.deleteAdmin(a.id); addToast('削除しました'); await load(); }
+    catch (err) { addToast(err.message, 'error'); }
+  };
+
+  return (
+    <>
+      <div style={{ padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)', borderRadius: 8, marginBottom: 16, fontSize: '0.78rem', color: 'var(--text-sub)', lineHeight: 1.6 }}>
+        管理者は複数登録できます。各管理者にエリア（東京・大阪）を設定すると、ログイン時にデフォルトでそのエリアの案件のみが表示されます。
+      </div>
+
+      <button className="btn btn-primary btn-sm" style={{ marginBottom: 16 }} onClick={openAdd}>+ 管理者を追加</button>
+
+      {showForm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: 'var(--navy-mid)', border: '1px solid var(--border)',
+            borderRadius: 16, padding: 24, width: '100%', maxWidth: 380 }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>
+              {editTarget ? '管理者情報を編集' : '管理者を追加'}
+            </div>
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label>表示名 *</label>
+                <input value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))}
+                  placeholder="鈴木 一郎" required />
+              </div>
+              <div className="form-group">
+                <label>ログインID *</label>
+                <input value={form.login_id} onChange={e => setForm(f => ({ ...f, login_id: e.target.value }))}
+                  placeholder="suzuki" required style={{ fontFamily: 'monospace' }} />
+              </div>
+              <div className="form-group">
+                <label>{editTarget ? '新しいパスワード（変更する場合のみ）' : 'パスワード *'}</label>
+                <input type="password" value={form.password}
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder={editTarget ? '変更しない場合は空白' : 'パスワードを入力'}
+                  required={!editTarget} />
+              </div>
+              <div className="form-group">
+                <label>メールアドレス</label>
+                <input type="email" value={form.email}
+                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="suzuki@example.com" />
+              </div>
+              <div className="form-group">
+                <label>担当エリア *</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['東京', '大阪'].map(a => (
+                    <label key={a} style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      cursor: 'pointer', padding: '10px 12px', borderRadius: 8,
+                      background: form.area === a ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
+                      border: `1px solid ${form.area === a ? 'var(--accent)' : 'var(--border)'}`,
+                    }}>
+                      <input type="radio" name="admin_area" value={a} checked={form.area === a}
+                        onChange={() => setForm(f => ({ ...f, area: a }))} style={{ width: 'auto', margin: 0 }} />
+                      <span style={{ fontSize: '0.88rem' }}>📍 {a}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={closeForm}>キャンセル</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={loading}>
+                  {loading ? '保存中...' : editTarget ? '更新' : '追加'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {admins.length === 0 ? (
+        <div className="empty-state" style={{ padding: '32px 16px' }}>管理者がいません</div>
+      ) : admins.map(a => (
+        <div key={a.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--navy)',
+            border: '1px solid var(--accent)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>
+            🔑
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontWeight: 600 }}>{a.display_name}</span>
+              <span style={{ fontSize: '0.68rem', padding: '1px 7px', borderRadius: 99, background: 'rgba(59,130,246,0.15)', color: 'var(--accent-lt)' }}>
+                📍 {a.area || '東京'}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-sub)', fontFamily: 'monospace' }}>
+              ID: {a.login_id}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-sub)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {a.email ? `📧 ${a.email}` : '📧 未設定'}
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={() => openEdit(a)}>編集</button>
+          <button className="btn btn-danger btn-sm" onClick={() => handleDelete(a)}>削除</button>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function BlockedTab({ addToast }) {
   const [blocked, setBlocked] = useState([]);
   const [form, setForm] = useState({ date: '', time_from: '', time_to: '', reason: '' });

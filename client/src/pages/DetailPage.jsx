@@ -141,8 +141,10 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
 
   // 候補日の追加・削除：管理者のみ（営業は候補日を設定できない）
   const canEditCandidates = isAdmin && !isCancelled && !isDelivered;
-  // 確定ボタン表示：候補日がある状態で、担当営業または管理者
-  const canConfirm = isScheduled && (isOwner || isAdmin) && !isCancelled;
+  // 確定ボタン表示：候補日が1件以上ある状態で、担当営業または管理者なら誰でも確定可能
+  // （ステータスが scheduled になっていなくても、候補日が存在すれば確定できるようにする）
+  const hasAnyCandidates = (project.candidates?.length || 0) > 0;
+  const canConfirm = hasAnyCandidates && (isOwner || isAdmin) && !isCancelled && !isConfirmed && !isDelivered;
   // リマインドボタン：候補日待ち（pending）のときのみ、担当営業または管理者
   const canRemind = isPending && (isOwner || isAdmin);
   // キャンセルボタン：キャンセル・納品済み以外なら誰でも

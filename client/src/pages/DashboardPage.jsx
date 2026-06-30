@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { StatusBadge, formatDate, relativeTime } from '../components/StatusBadge';
 
 const DELIVERY_ICONS = { remote: '🖥', onsite: '🚗' };
+const AREAS = ['東京', '大阪'];
 
 const STATUS_FILTERS = [
   { key: 'pending',   label: '候補日待ち' },
@@ -19,6 +20,8 @@ export default function DashboardPage({ onNavigate }) {
   const [statusFilter, setStatusFilter] = useState('pending');
   // 管理者用：表示対象メンバー（'all' または 営業の display_name）
   const [memberFilter, setMemberFilter] = useState('all');
+  // 管理者用：エリアフィルター（デフォルトは自分のエリアのみ）
+  const [areaFilter, setAreaFilter] = useState(user.area || '東京');
   const [salesUsers, setSalesUsers] = useState([]);
   const [projects, setProjects] = useState([]);
   const [stats, setStats] = useState({});
@@ -34,17 +37,29 @@ export default function DashboardPage({ onNavigate }) {
     }).finally(() => setLoading(false));
   }, []);
 
+  // display_name → area のマップ（管理者がエリア絞り込みに使用）
+  const areaByName = {};
+  salesUsers.forEach(u => { areaByName[u.display_name] = u.area || '東京'; });
+
   const filtered = projects.filter(p => {
     if (p.status !== statusFilter) return false;
     if (user.role === 'sales') return p.sales_rep === user.name;
-    // 管理者：メンバーフィルター適用
-    if (memberFilter === 'all') return true;
-    return p.sales_rep === memberFilter;
+
+    // 管理者：メンバー個別指定があれば最優先
+    if (memberFilter !== 'all') return p.sales_rep === memberFilter;
+
+    // 管理者：エリアフィルター（'all'なら全エリア）
+    if (areaFilter === 'all') return true;
+    return (areaByName[p.sales_rep] || '東京') === areaFilter;
   });
+
+  const visibleSalesUsers = user.role === 'admin' && areaFilter !== 'all'
+    ? salesUsers.filter(u => (u.area || '東京') === areaFilter)
+    : salesUsers;
 
   const pageSubText = user.role === 'sales'
     ? `${user.name}の案件`
-    : (memberFilter === 'all' ? '全メンバーの案件' : `${memberFilter}の案件`);
+    : (memberFilter !== 'all' ? `${memberFilter}の案件` : (areaFilter === 'all' ? '全エリアの案件' : `${areaFilter}エリアの案件`));
 
   return (
     <>
@@ -60,13 +75,29 @@ export default function DashboardPage({ onNavigate }) {
         </div>
       )}
 
-      {/* 管理者専用：メンバー切り替え */}
+      {/* 管理者専用：エリア切り替え（デフォルトは自分のエリア） */}
+      {user.role === 'admin' && (
+        <div className="filter-bar">
+          {AREAS.map(a => (
+            <button key={a} className={`filter-chip ${areaFilter === a ? 'active' : ''}`}
+              onClick={() => { setAreaFilter(a); setMemberFilter('all'); }}>
+              📍 {a}
+            </button>
+          ))}
+          <button className={`filter-chip ${areaFilter === 'all' ? 'active' : ''}`}
+            onClick={() => { setAreaFilter('all'); setMemberFilter('all'); }}>
+            🌐 全エリア
+          </button>
+        </div>
+      )}
+
+      {/* 管理者専用：メンバー切り替え（選択中エリアの営業のみ表示） */}
       {user.role === 'admin' && (
         <div className="filter-bar">
           <button className={`filter-chip ${memberFilter === 'all' ? 'active' : ''}`} onClick={() => setMemberFilter('all')}>
             👥 全メンバー
           </button>
-          {salesUsers.map(u => (
+          {visibleSalesUsers.map(u => (
             <button key={u.id} className={`filter-chip ${memberFilter === u.display_name ? 'active' : ''}`} onClick={() => setMemberFilter(u.display_name)}>
               {u.display_name}
             </button>
