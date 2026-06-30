@@ -88,7 +88,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
               <label>担当営業 *</label>
               <select value={form.sales_rep} onChange={e => setField('sales_rep', e.target.value)} required>
                 <option value="">選択してください</option>
-                {salesUsers.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+                {salesUsers.map(u => <option key={u.id} value={u.display_name}>{u.display_name}</option>)}
               </select>
             </div>
           ) : (

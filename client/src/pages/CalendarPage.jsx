@@ -22,28 +22,34 @@ export default function CalendarPage({ onNavigate }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [selected, setSelected] = useState(null);
+  // 営業はデフォルト「自分」、管理者は「全メンバー」
+  const [scope, setScope] = useState(user.role === 'sales' ? 'mine' : 'all');
 
   useEffect(() => {
     Promise.all([api.getProjects(), api.getBlockedDates()])
       .then(([p, b]) => { setProjects(p); setBlockedDates(b); });
   }, []);
 
+  const visibleProjects = scope === 'mine' ? projects.filter(p => p.sales_rep === user.name) : projects;
+
   const days = getMonthDays(year, month);
   const toKey = d => d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : null;
   const today = toKey(new Date());
 
   const byDate = {};
-  projects.forEach(p => {
-    if (p.confirmed_date) {
+  visibleProjects.forEach(p => {
+    if (p.confirmed_date && p.status === 'confirmed') {
       const k = p.confirmed_date.split(' ')[0];
       if (!byDate[k]) byDate[k] = [];
       byDate[k].push({ ...p, _type: 'confirmed' });
     }
-    (p.candidates || []).forEach(c => {
-      const k = c.candidate_date;
-      if (!byDate[k]) byDate[k] = [];
-      byDate[k].push({ ...p, _type: 'candidate', _time: c.candidate_time });
-    });
+    if (p.status !== 'cancelled') {
+      (p.candidates || []).forEach(c => {
+        const k = c.candidate_date;
+        if (!byDate[k]) byDate[k] = [];
+        byDate[k].push({ ...p, _type: 'candidate', _time: c.candidate_time });
+      });
+    }
   });
 
   const blockedSet = new Set(blockedDates.map(b => b.date));
@@ -57,7 +63,12 @@ export default function CalendarPage({ onNavigate }) {
   return (
     <>
       <div className="page-title">カレンダー</div>
-      <div className="page-sub">納品日・候補日・予定不可日を確認</div>
+      <div className="page-sub">{scope === 'mine' ? `${user.name}のスケジュール` : '全メンバーのスケジュール'}</div>
+
+      <div className="filter-bar" style={{ marginBottom: 16 }}>
+        <button className={`filter-chip ${scope === 'mine' ? 'active' : ''}`} onClick={() => setScope('mine')}>自分の案件</button>
+        <button className={`filter-chip ${scope === 'all' ? 'active' : ''}`} onClick={() => setScope('all')}>全メンバー</button>
+      </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <button className="btn btn-ghost btn-sm" onClick={prevMonth}>‹</button>

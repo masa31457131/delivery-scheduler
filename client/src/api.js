@@ -14,7 +14,7 @@ async function req(method, path, body) {
 }
 
 export const api = {
-  login: (name, password) => req('POST', '/auth/login', { name, password }),
+  login: (loginId, password) => req('POST', '/auth/login', { name: loginId, password }),
   getUsers: () => req('GET', '/users'),
   createUser: (data) => req('POST', '/users', data),
   updateUser: (id, data) => req('PUT', `/users/${id}`, data),
@@ -31,17 +31,17 @@ export const api = {
   getEmailSettings: () => req('GET', '/settings/email'),
   updateEmailSettings: (data) => req('PUT', '/settings/email', data),
   testEmail: () => req('POST', '/settings/email/test'),
+  getEmailTemplates: () => req('GET', '/settings/email-templates'),
+  updateEmailTemplates: (data) => req('PUT', '/settings/email-templates', data),
+  resetEmailTemplates: () => req('POST', '/settings/email-templates/reset'),
   getProjects: () => req('GET', '/projects'),
   getProject: (id) => req('GET', `/projects/${id}`),
   createProject: (data) => req('POST', '/projects', data),
   updateProject: (id, data) => req('PUT', `/projects/${id}`, data),
   addCandidate: (projectId, data) => req('POST', `/projects/${projectId}/candidates`, data),
   deleteCandidate: (projectId, candidateId) => req('DELETE', `/projects/${projectId}/candidates/${candidateId}`),
-  // 営業が仮スケジュールを確定
   confirmSchedule: (id, data) => req('POST', `/projects/${id}/confirm-schedule`, data),
-  // キャンセル（理由必須）
   cancelProject: (id, data) => req('POST', `/projects/${id}/cancel`, data),
-  // リマインドメール送信
   sendReminder: (id) => req('POST', `/projects/${id}/remind`),
   deleteProject: (id) => req('DELETE', `/projects/${id}`),
   getStats: () => req('GET', '/stats'),

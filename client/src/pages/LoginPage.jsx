@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 
 export default function LoginPage() {
   const { login } = useAuth();
-  const [name, setName] = useState('');
+  const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -14,7 +14,7 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      const user = await api.login(name, password);
+      const user = await api.login(loginId, password);
       login(user);
     } catch (err) {
       setError(err.message);
@@ -33,11 +33,11 @@ export default function LoginPage() {
         </div>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>ユーザー名</label>
+            <label>ログインID</label>
             <input
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="例: 営業 山田"
+              value={loginId}
+              onChange={e => setLoginId(e.target.value)}
+              placeholder="例: yamada"
               required
               autoComplete="username"
             />
@@ -65,9 +65,9 @@ export default function LoginPage() {
         <hr className="divider" />
         <div className="text-sub" style={{ fontSize: '0.75rem', lineHeight: 1.6 }}>
           <div style={{ marginBottom: 4, fontWeight: 600 }}>初期アカウント</div>
-          <div>管理者 / admin123</div>
-          <div>営業 山田 / sales123</div>
-          <div>営業 田中 / sales456</div>
+          <div>管理者：admin / admin123</div>
+          <div>山田 太郎：yamada / sales123</div>
+          <div>田中 一郎：tanaka / sales456</div>
         </div>
       </div>
     </div>
