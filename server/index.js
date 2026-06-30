@@ -41,6 +41,20 @@ const DEFAULT_TEMPLATES = {
 
 候補日をカレンダーで確認して設定してください。`
   },
+  candidates_set: {
+    subject: '【仮スケジュール設定完了】{{project_type}}（{{client_name}}）',
+    body: `候補日が設定されました。
+
+案件内容：{{project_type}}
+顧客名：{{client_name}}
+担当営業：{{sales_rep}}
+納品方法：{{delivery_method}}
+
+▼候補日一覧
+{{candidate_list}}
+
+担当営業は候補日の中から日程を確定してください。`
+  },
   schedule_confirmed: {
     subject: '【日程確定】{{project_type}}（{{client_name}}）',
     body: `スケジュールが確定しました。
@@ -572,8 +586,11 @@ app.post('/api/projects/:id/candidates', async (req, res) => {
   if (!date) return res.status(400).json({ error: '日付は必須です' });
   const { rows: existing } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!existing[0]) return res.status(404).json({ error: '案件が見つかりません' });
+  const maxDays = existing[0].candidate_days || 1;
   const { rows: cands } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
-  if (cands.length >= 3) return res.status(400).json({ error: '候補日は最大3件までです' });
+  if (cands.length >= maxDays) {
+    return res.status(400).json({ error: `この案件の希望候補日数は${maxDays}日です。${maxDays}件を超えて登録できません。` });
+  }
   await pool.query('INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_time,label) VALUES ($1,$2,$3,$4,$5)',
     [uuidv4(), req.params.id, date, time || '', `第${cands.length+1}候補`]);
   await pool.query(
@@ -597,6 +614,47 @@ app.delete('/api/projects/:id/candidates/:candidateId', async (req, res) => {
   await pool.query('UPDATE projects SET updated_at=NOW(), status=$1 WHERE id=$2', [newStatus, req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
   res.json(updated);
+});
+
+// ── 候補日の設定完了（管理者が候補日設定を確定し、案件ごとにまとめて通知）────
+app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
+  const p = rows[0];
+
+  const { rows: cands } = await pool.query(
+    'SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]
+  );
+  if (cands.length === 0) {
+    return res.status(400).json({ error: '候補日が1件も登録されていません' });
+  }
+
+  const maxDays = p.candidate_days || 1;
+  if (cands.length > maxDays) {
+    return res.status(400).json({ error: `希望候補日数（${maxDays}日）を超えています。候補日を${maxDays}件以下に調整してください。` });
+  }
+  if (cands.length < maxDays) {
+    return res.status(400).json({ error: `希望候補日数は${maxDays}日です。現在${cands.length}件しか登録されていません。あと${maxDays - cands.length}件追加してください。` });
+  }
+
+  // ステータスを scheduled に確定（既に scheduled の場合もそのまま）
+  await pool.query("UPDATE projects SET status='scheduled', updated_at=NOW() WHERE id=$1", [req.params.id]);
+  const { rows: updatedProject } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
+
+  // 案件ごとにまとめて候補日一覧をメール通知（管理者＋担当営業）
+  const allTo = await buildRecipients(p.sales_rep);
+  if (allTo.length) {
+    const dateLines = cands.map(c =>
+      `${c.label}：${c.candidate_date}${c.candidate_time ? ' ' + c.candidate_time : ''}`
+    ).join('\n');
+    await sendTemplatedEmail('candidates_set', allTo, {
+      project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+      delivery_method: DELIVERY_LABEL(p.delivery_method),
+      candidate_list: dateLines,
+    });
+  }
+
+  res.json({ ...updatedProject[0], candidates: cands });
 });
 
 // ── 仮スケジュールを確定（営業・管理者どちらも可）──────────────
