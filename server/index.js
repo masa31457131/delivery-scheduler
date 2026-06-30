@@ -19,13 +19,124 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
-// ── Email helpers ─────────────────────────────────────────────
+// ── Email settings ───────────────────────────────────────────
 async function getEmailSettings() {
   const { rows } = await pool.query("SELECT value FROM settings WHERE key='email_settings'");
   if (!rows[0]) return { provider: 'gmail', from: '', notify_emails: [], gmail_user: '', gmail_app_password: '' };
   return JSON.parse(rows[0].value);
 }
 
+// ── Email templates（管理者が編集可能）────────────────────────
+const DEFAULT_TEMPLATES = {
+  schedule_proposed: {
+    subject: '【新規依頼】{{project_type}}（{{client_name}}）',
+    body: `新しい案件依頼が届きました。
+
+案件内容：{{project_type}}
+顧客名：{{client_name}}
+担当営業：{{sales_rep}}
+納品方法：{{delivery_method}}
+希望候補日数：{{candidate_days}}日
+備考：{{memo}}
+
+候補日をカレンダーで確認して設定してください。`
+  },
+  schedule_confirmed: {
+    subject: '【日程確定】{{project_type}}（{{client_name}}）',
+    body: `スケジュールが確定しました。
+
+案件内容：{{project_type}}
+顧客名：{{client_name}}
+担当営業：{{sales_rep}}
+納品方法：{{delivery_method}}
+確定日時：{{confirmed_date}}
+
+日程が確定しました。準備をお願いします。`
+  },
+  schedule_cancelled: {
+    subject: '【キャンセル】{{project_type}}（{{client_name}}）',
+    body: `案件がキャンセルされました。
+
+案件内容：{{project_type}}
+顧客名：{{client_name}}
+担当営業：{{sales_rep}}
+確定日：{{confirmed_date}}
+キャンセル理由：{{cancel_reason}}
+
+再スケジュールが必要な場合は新規案件として再申請してください。`
+  },
+  reminder: {
+    subject: '【リマインド】仮スケジュール日程未設定：{{project_type}}（{{client_name}}）',
+    body: `仮スケジュール未設定のリマインドです。
+
+案件内容：{{project_type}}
+顧客名：{{client_name}}
+担当営業：{{sales_rep}}
+希望候補日数：{{candidate_days}}日
+依頼日：{{created_at}}
+
+候補日が未設定のままです。早急にスケジュールを設定してください。`
+  },
+  auto_cancel_warning: {
+    subject: '【警告】明日自動キャンセル予定：{{project_type}}（{{client_name}}）',
+    body: `⚠️ 明日自動キャンセルされます。
+
+案件内容：{{project_type}}
+顧客名：{{client_name}}
+担当営業：{{sales_rep}}
+自動キャンセル日：{{deadline_date}}
+理由：仮スケジュール設定から10営業日経過
+
+本日中にスケジュールを確定するか、担当者に連絡してください。`
+  },
+  auto_cancelled: {
+    subject: '【自動キャンセル】{{project_type}}（{{client_name}}）',
+    body: `案件が自動キャンセルされました。
+
+案件内容：{{project_type}}
+顧客名：{{client_name}}
+担当営業：{{sales_rep}}
+キャンセル理由：仮スケジュール設定から10営業日経過のため自動キャンセル
+
+再スケジュールが必要な場合は新規案件として再申請してください。`
+  },
+};
+
+async function getEmailTemplates() {
+  const { rows } = await pool.query("SELECT value FROM settings WHERE key='email_templates'");
+  if (!rows[0]) return DEFAULT_TEMPLATES;
+  return { ...DEFAULT_TEMPLATES, ...JSON.parse(rows[0].value) };
+}
+
+function renderTemplate(str, vars) {
+  return str.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
+}
+
+function textToHtml(title, bodyText) {
+  const bodyHtml = bodyText
+    .split('\n')
+    .map(line => line.trim() === '' ? '<br>' : `<div style="margin:2px 0">${line}</div>`)
+    .join('');
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f7fa;font-family:'Helvetica Neue',Arial,sans-serif">
+  <div style="max-width:520px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+    <div style="background:#1a2332;padding:24px 28px">
+      <div style="color:#3b82f6;font-size:11px;font-weight:700;letter-spacing:0.1em;margin-bottom:6px">納品スケジューラー</div>
+      <div style="color:#fff;font-size:18px;font-weight:700">${title}</div>
+    </div>
+    <div style="padding:24px 28px;font-size:14px;color:#333;line-height:1.8;white-space:pre-wrap">${bodyHtml}</div>
+  </div></body></html>`;
+}
+
+async function sendTemplatedEmail(templateKey, to, vars) {
+  const templates = await getEmailTemplates();
+  const tpl = templates[templateKey] || DEFAULT_TEMPLATES[templateKey];
+  const subject = renderTemplate(tpl.subject, vars);
+  const bodyText = renderTemplate(tpl.body, vars);
+  const html = textToHtml(subject, bodyText);
+  return sendEmail({ to, subject, html });
+}
+
+// ── Email transport ───────────────────────────────────────────
 function createGmailTransport(user, pass) {
   return nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
 }
@@ -53,36 +164,17 @@ async function sendEmail({ to, subject, html }) {
   return { skipped: true };
 }
 
-function makeEmailHtml(title, rows, note) {
-  const rowsHtml = rows.map(([label, value, hi]) =>
-    `<tr><td style="padding:8px 14px;color:#666;font-size:13px;border-bottom:1px solid #f0f0f0">${label}</td>
-     <td style="padding:8px 14px;font-size:13px;border-bottom:1px solid #f0f0f0${hi ? ';color:#10b981;font-weight:700;font-size:15px' : ''}">${value}</td></tr>`
-  ).join('');
-  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f7fa;font-family:'Helvetica Neue',Arial,sans-serif">
-  <div style="max-width:520px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
-    <div style="background:#1a2332;padding:24px 28px">
-      <div style="color:#3b82f6;font-size:11px;font-weight:700;letter-spacing:0.1em;margin-bottom:6px">納品スケジューラー</div>
-      <div style="color:#fff;font-size:20px;font-weight:700">${title}</div>
-    </div>
-    <div style="padding:8px 0"><table style="width:100%;border-collapse:collapse">${rowsHtml}</table></div>
-    ${note ? `<div style="padding:16px 28px;background:#f8fafc;font-size:11px;color:#999">${note}</div>` : ''}
-  </div></body></html>`;
-}
-
-// 営業担当のメールアドレスを取得
-async function getSalesEmail(salesRepName) {
-  const { rows } = await pool.query("SELECT email FROM users WHERE name=$1 AND role='sales'", [salesRepName]);
+// 営業担当のメールアドレスを取得（login_idで検索）
+async function getSalesEmail(loginId) {
+  const { rows } = await pool.query("SELECT email FROM users WHERE login_id=$1 AND role='sales'", [loginId]);
   return rows[0]?.email || null;
 }
-
-// 管理者通知先 + 営業担当の全送信先を構築
-async function buildRecipients(salesRepName) {
+async function buildRecipients(salesLoginId) {
   const settings = await getEmailSettings();
-  const salesEmail = await getSalesEmail(salesRepName);
+  const salesEmail = await getSalesEmail(salesLoginId);
   return [...new Set([...(settings.notify_emails || []), ...(salesEmail ? [salesEmail] : [])])].filter(Boolean);
 }
 
-// 営業日（土日祝を除く）を加算する簡易計算（祝日は考慮しない）
 function addBusinessDays(date, days) {
   const d = new Date(date);
   let added = 0;
@@ -94,17 +186,19 @@ function addBusinessDays(date, days) {
   return d;
 }
 
+const DELIVERY_LABEL = (m) => m === 'onsite' ? '🚗 現地訪問' : '🖥 リモート';
+
 // ── DB Init ───────────────────────────────────────────────────
 async function initDB() {
   const client = await pool.connect();
   try {
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
-        id       TEXT PRIMARY KEY,
-        name     TEXT NOT NULL UNIQUE,
-        role     TEXT NOT NULL DEFAULT 'sales',
-        password TEXT NOT NULL,
-        email    TEXT DEFAULT ''
+        id           TEXT PRIMARY KEY,
+        name         TEXT NOT NULL UNIQUE,
+        role         TEXT NOT NULL DEFAULT 'sales',
+        password     TEXT NOT NULL,
+        email        TEXT DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS projects (
         id              TEXT PRIMARY KEY,
@@ -142,7 +236,7 @@ async function initDB() {
       );
     `);
 
-    // Migrations for existing DBs
+    // Migrations
     await client.query(`ALTER TABLE projects ALTER COLUMN project_name DROP NOT NULL`).catch(() => {});
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS delivery_method TEXT DEFAULT 'remote'`);
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_type TEXT DEFAULT '新規納品'`);
@@ -150,11 +244,21 @@ async function initDB() {
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS cancel_reason TEXT DEFAULT ''`);
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ`);
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT ''`);
+    // display_name / login_id 追加（既存の name を login_id として引き継ぎ、display_name も同値で初期化）
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS login_id TEXT`);
+    await client.query(`UPDATE users SET display_name = name WHERE display_name IS NULL`);
+    await client.query(`UPDATE users SET login_id = name WHERE login_id IS NULL`);
+    await client.query(`ALTER TABLE users ADD CONSTRAINT users_login_id_unique UNIQUE (login_id)`).catch(() => {});
+    // projects.sales_rep は login_id を保持する想定（既存データは name=login_id のため互換）
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
     if (parseInt(rows[0].c) === 0) {
       await client.query(
-        `INSERT INTO users (id,name,role,password,email) VALUES ($1,'管理者','admin','admin123',''),($2,'営業 山田','sales','sales123',''),($3,'営業 田中','sales','sales456','')`,
+        `INSERT INTO users (id,name,display_name,login_id,role,password,email) VALUES
+         ($1,'管理者','管理者','admin','admin','admin123',''),
+         ($2,'営業 山田','山田 太郎','yamada','sales','sales123',''),
+         ($3,'営業 田中','田中 一郎','tanaka','sales','sales456','')`,
         [uuidv4(), uuidv4(), uuidv4()]
       );
     }
@@ -173,40 +277,57 @@ app.use(express.json());
 const CLIENT_BUILD = path.join(__dirname, '../client/dist');
 if (fs.existsSync(CLIENT_BUILD)) app.use(express.static(CLIENT_BUILD));
 
-// ── Auth ──────────────────────────────────────────────────────
+// ── Auth（login_idでログイン）──────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
-  const { name, password } = req.body;
-  const { rows } = await pool.query('SELECT id,name,role FROM users WHERE name=$1 AND password=$2', [name, password]);
-  if (!rows[0]) return res.status(401).json({ error: 'ユーザー名またはパスワードが違います' });
-  res.json(rows[0]);
+  const { name, password } = req.body; // name パラメータに login_id を入れて送ってもらう（互換維持）
+  const { rows } = await pool.query(
+    'SELECT id,name,display_name,login_id,role FROM users WHERE login_id=$1 AND password=$2',
+    [name, password]
+  );
+  if (!rows[0]) return res.status(401).json({ error: 'ログインIDまたはパスワードが違います' });
+  const u = rows[0];
+  res.json({ id: u.id, name: u.display_name || u.name, login_id: u.login_id, role: u.role });
 });
 
 // ── Users ─────────────────────────────────────────────────────
 app.get('/api/users', async (_req, res) => {
-  const { rows } = await pool.query("SELECT id,name,role,email FROM users WHERE role='sales' ORDER BY name");
+  const { rows } = await pool.query(
+    "SELECT id,display_name,login_id,email FROM users WHERE role='sales' ORDER BY display_name"
+  );
   res.json(rows);
 });
 app.post('/api/users', async (req, res) => {
-  const { name, password, email } = req.body;
-  if (!name || !password) return res.status(400).json({ error: '名前とパスワードは必須です' });
-  const dup = await pool.query('SELECT id FROM users WHERE name=$1', [name]);
-  if (dup.rows[0]) return res.status(400).json({ error: 'この名前はすでに使われています' });
+  const { display_name, login_id, password, email } = req.body;
+  if (!display_name || !login_id || !password) return res.status(400).json({ error: '表示名・ログインID・パスワードは必須です' });
+  const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
+  if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
-  await pool.query('INSERT INTO users (id,name,role,password,email) VALUES ($1,$2,$3,$4,$5)', [id, name, 'sales', password, email || '']);
-  res.status(201).json({ id, name, role: 'sales', email: email || '' });
+  await pool.query(
+    'INSERT INTO users (id,name,display_name,login_id,role,password,email) VALUES ($1,$2,$2,$3,$4,$5,$6)',
+    [id, display_name, login_id, 'sales', password, email || '']
+  );
+  res.status(201).json({ id, display_name, login_id, role: 'sales', email: email || '' });
 });
 app.put('/api/users/:id', async (req, res) => {
-  const { name, password, email } = req.body;
+  const { display_name, login_id, password, email } = req.body;
   const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'ユーザーが見つかりません' });
   if (rows[0].role === 'admin') return res.status(403).json({ error: '管理者アカウントは変更できません' });
-  if (name) {
-    const dup = await pool.query('SELECT id FROM users WHERE name=$1 AND id!=$2', [name, req.params.id]);
-    if (dup.rows[0]) return res.status(400).json({ error: 'この名前はすでに使われています' });
+  if (login_id) {
+    const dup = await pool.query('SELECT id FROM users WHERE login_id=$1 AND id!=$2', [login_id, req.params.id]);
+    if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   }
-  await pool.query('UPDATE users SET name=COALESCE($1,name), password=COALESCE($2,password), email=COALESCE($3,email) WHERE id=$4',
-    [name || null, password || null, email !== undefined ? email : null, req.params.id]);
-  const { rows: u } = await pool.query('SELECT id,name,role,email FROM users WHERE id=$1', [req.params.id]);
+  await pool.query(
+    `UPDATE users SET
+      display_name=COALESCE($1,display_name),
+      name=COALESCE($1,name),
+      login_id=COALESCE($2,login_id),
+      password=COALESCE($3,password),
+      email=COALESCE($4,email)
+     WHERE id=$5`,
+    [display_name || null, login_id || null, password || null, email !== undefined ? email : null, req.params.id]
+  );
+  const { rows: u } = await pool.query('SELECT id,display_name,login_id,email FROM users WHERE id=$1', [req.params.id]);
   res.json(u[0]);
 });
 app.delete('/api/users/:id', async (req, res) => {
@@ -284,11 +405,28 @@ app.post('/api/settings/email/test', async (req, res) => {
   const result = await sendEmail({
     to: settings.notify_emails,
     subject: '【テスト】納品スケジューラー メール設定確認',
-    html: makeEmailHtml('メール設定テスト ✅', [['プロバイダー', settings.provider === 'resend' ? 'Resend' : 'Gmail SMTP'], ['送信先', settings.notify_emails.join(', ')]], 'このメールはテスト送信です。'),
+    html: textToHtml('メール設定テスト ✅', `プロバイダー：${settings.provider === 'resend' ? 'Resend' : 'Gmail SMTP'}\n送信先：${settings.notify_emails.join(', ')}\n\nこのメールはテスト送信です。`),
   });
   if (result?.error) return res.status(500).json({ error: result.error });
   if (result?.skipped) return res.status(400).json({ error: 'メール設定が未完了です' });
   res.json({ success: true });
+});
+
+// ── Email Templates（管理者が編集）─────────────────────────────
+app.get('/api/settings/email-templates', async (_req, res) => {
+  res.json(await getEmailTemplates());
+});
+app.put('/api/settings/email-templates', async (req, res) => {
+  const templates = req.body;
+  await pool.query(
+    "INSERT INTO settings (key,value) VALUES ('email_templates',$1) ON CONFLICT (key) DO UPDATE SET value=$1",
+    [JSON.stringify(templates)]
+  );
+  res.json({ success: true });
+});
+app.post('/api/settings/email-templates/reset', async (req, res) => {
+  await pool.query("DELETE FROM settings WHERE key='email_templates'");
+  res.json(DEFAULT_TEMPLATES);
 });
 
 // ── Projects ──────────────────────────────────────────────────
@@ -319,20 +457,13 @@ app.post('/api/projects', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [id]);
   const project = { ...rows[0], candidates: [] };
 
-  // 管理者へ通知
   const settings = await getEmailSettings();
   if (settings.notify_emails?.length) {
-    await sendEmail({
-      to: settings.notify_emails,
-      subject: `【新規依頼】${project_type}（${client_name}）`,
-      html: makeEmailHtml('新しい案件依頼が届きました', [
-        ['案件内容', `<b>${project_type}</b>`],
-        ['顧客名', client_name],
-        ['担当営業', sales_rep],
-        ['納品方法', delivery_method === 'onsite' ? '🚗 現地訪問' : '🖥 リモート'],
-        ['希望候補日数', `${candidate_days || 1}日`],
-        ['備考', memo || 'なし'],
-      ], '候補日をカレンダーで確認して設定してください。'),
+    await sendTemplatedEmail('schedule_proposed', settings.notify_emails, {
+      project_type, client_name, sales_rep,
+      delivery_method: DELIVERY_LABEL(delivery_method),
+      candidate_days: candidate_days || 1,
+      memo: memo || 'なし',
     });
   }
   res.status(201).json(project);
@@ -374,7 +505,10 @@ app.post('/api/projects/:id/candidates', async (req, res) => {
   if (cands.length >= 3) return res.status(400).json({ error: '候補日は最大3件までです' });
   await pool.query('INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_time,label) VALUES ($1,$2,$3,$4,$5)',
     [uuidv4(), req.params.id, date, time || '', `第${cands.length+1}候補`]);
-  await pool.query('UPDATE projects SET updated_at=NOW(), status=CASE WHEN status=\'pending\' THEN \'scheduled\' ELSE status END WHERE id=$1', [req.params.id]);
+  await pool.query(
+    "UPDATE projects SET updated_at=NOW(), status=CASE WHEN status='pending' THEN 'scheduled' ELSE status END WHERE id=$1",
+    [req.params.id]
+  );
   const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
   res.status(201).json(updated);
 });
@@ -388,14 +522,13 @@ app.delete('/api/projects/:id/candidates/:candidateId', async (req, res) => {
   for (let i = 0; i < remaining.length; i++) {
     await pool.query('UPDATE schedule_candidates SET label=$1 WHERE id=$2', [`第${i+1}候補`, remaining[i].id]);
   }
-  // 候補日が0件になったらpendingに戻す
   const newStatus = remaining.length === 0 ? 'pending' : 'scheduled';
   await pool.query('UPDATE projects SET updated_at=NOW(), status=$1 WHERE id=$2', [newStatus, req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
   res.json(updated);
 });
 
-// ── 営業が仮スケジュールを確定 ───────────────────────────────
+// ── 仮スケジュールを確定（営業・管理者どちらも可）──────────────
 app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
   const { confirmed_date, confirmed_time } = req.body;
   if (!confirmed_date) return res.status(400).json({ error: '確定日を選択してください' });
@@ -412,19 +545,11 @@ app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
   const { rows: updated } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   const project = { ...updated[0], candidates: [] };
 
-  // 営業担当 + 管理者へ通知
   const allTo = await buildRecipients(p.sales_rep);
   if (allTo.length) {
-    await sendEmail({
-      to: allTo,
-      subject: `【日程確定】${p.project_type}（${p.client_name}）`,
-      html: makeEmailHtml('スケジュールが確定しました', [
-        ['案件内容', `<b>${p.project_type}</b>`],
-        ['顧客名', p.client_name],
-        ['担当営業', p.sales_rep],
-        ['納品方法', p.delivery_method === 'onsite' ? '🚗 現地訪問' : '🖥 リモート'],
-        ['✅ 確定日時', fullDate, true],
-      ], '日程が確定しました。準備をお願いします。'),
+    await sendTemplatedEmail('schedule_confirmed', allTo, {
+      project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+      delivery_method: DELIVERY_LABEL(p.delivery_method), confirmed_date: fullDate,
     });
   }
   res.json(project);
@@ -438,125 +563,74 @@ app.post('/api/projects/:id/cancel', async (req, res) => {
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
   const p = rows[0];
 
-  await pool.query(
-    `UPDATE projects SET status='cancelled', cancel_reason=$1, updated_at=NOW() WHERE id=$2`,
-    [reason.trim(), req.params.id]
-  );
+  await pool.query(`UPDATE projects SET status='cancelled', cancel_reason=$1, updated_at=NOW() WHERE id=$2`, [reason.trim(), req.params.id]);
   await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
 
-  // 営業担当 + 管理者へ通知
   const allTo = await buildRecipients(p.sales_rep);
   if (allTo.length) {
-    await sendEmail({
-      to: allTo,
-      subject: `【キャンセル】${p.project_type}（${p.client_name}）`,
-      html: makeEmailHtml('案件がキャンセルされました', [
-        ['案件内容', `<b>${p.project_type}</b>`],
-        ['顧客名', p.client_name],
-        ['担当営業', p.sales_rep],
-        ['確定日', p.confirmed_date || '未確定'],
-        ['キャンセル理由', `<span style="color:#dc2626">${reason.trim()}</span>`],
-      ], '再スケジュールが必要な場合は新規案件として再申請してください。'),
+    await sendTemplatedEmail('schedule_cancelled', allTo, {
+      project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+      confirmed_date: p.confirmed_date || '未確定', cancel_reason: reason.trim(),
     });
   }
   res.json({ ...updated[0], candidates: [] });
 });
 
-// ── リマインドメール ──────────────────────────────────────────
+// ── リマインド ────────────────────────────────────────────────
 app.post('/api/projects/:id/remind', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
   const p = rows[0];
-
   const settings = await getEmailSettings();
   const salesEmail = await getSalesEmail(p.sales_rep);
-  // 管理者 + 本人両方に送る
   const allTo = [...new Set([...(settings.notify_emails || []), ...(salesEmail ? [salesEmail] : [])])].filter(Boolean);
   if (!allTo.length) return res.status(400).json({ error: '送信先メールアドレスが登録されていません' });
 
-  const result = await sendEmail({
-    to: allTo,
-    subject: `【リマインド】仮スケジュール日程未設定：${p.project_type}（${p.client_name}）`,
-    html: makeEmailHtml('仮スケジュール未設定のリマインドです', [
-      ['案件内容', `<b>${p.project_type}</b>`],
-      ['顧客名', p.client_name],
-      ['担当営業', p.sales_rep],
-      ['希望候補日数', `${p.candidate_days || 1}日`],
-      ['依頼日', p.created_at ? new Date(p.created_at).toLocaleDateString('ja-JP') : '—'],
-    ], '候補日が未設定のままです。早急にスケジュールを設定してください。'),
+  const result = await sendTemplatedEmail('reminder', allTo, {
+    project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+    candidate_days: p.candidate_days || 1,
+    created_at: p.created_at ? new Date(p.created_at).toLocaleDateString('ja-JP') : '—',
   });
-
   if (result?.error) return res.status(500).json({ error: result.error });
   if (result?.skipped) return res.status(400).json({ error: 'メール設定が未完了です' });
   res.json({ success: true });
 });
 
-// ── 強制キャンセルバッチ（毎時実行） ─────────────────────────
+// ── 強制キャンセルバッチ ───────────────────────────────────────
 async function runAutoCancel() {
   try {
     const now = new Date();
-    // scheduled_atから10営業日後を計算して強制キャンセル
-    const { rows: projects } = await pool.query(
-      `SELECT * FROM projects WHERE status='scheduled' AND scheduled_at IS NOT NULL`
-    );
-
+    const { rows: projects } = await pool.query(`SELECT * FROM projects WHERE status='scheduled' AND scheduled_at IS NOT NULL`);
     for (const p of projects) {
       const deadline = addBusinessDays(p.scheduled_at, 10);
-      const warningDay = addBusinessDays(p.scheduled_at, 9); // 前日警告
-
+      const warningDay = addBusinessDays(p.scheduled_at, 9);
       const todayStr = now.toISOString().split('T')[0];
       const deadlineStr = deadline.toISOString().split('T')[0];
       const warningStr = warningDay.toISOString().split('T')[0];
 
-      // 強制キャンセル
       if (todayStr >= deadlineStr) {
-        await pool.query(
-          `UPDATE projects SET status='cancelled', cancel_reason='未確定のため（自動キャンセル）', updated_at=NOW() WHERE id=$1`,
-          [p.id]
-        );
+        await pool.query(`UPDATE projects SET status='cancelled', cancel_reason='未確定のため（自動キャンセル）', updated_at=NOW() WHERE id=$1`, [p.id]);
         await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [p.id]);
-        console.log(`[AutoCancel] ${p.id} ${p.project_type}`);
-
         const allTo = await buildRecipients(p.sales_rep);
         if (allTo.length) {
-          await sendEmail({
-            to: allTo,
-            subject: `【自動キャンセル】${p.project_type}（${p.client_name}）`,
-            html: makeEmailHtml('案件が自動キャンセルされました', [
-              ['案件内容', `<b>${p.project_type}</b>`],
-              ['顧客名', p.client_name],
-              ['担当営業', p.sales_rep],
-              ['キャンセル理由', '仮スケジュール設定から10営業日経過のため自動キャンセル'],
-            ], '再スケジュールが必要な場合は新規案件として再申請してください。'),
+          await sendTemplatedEmail('auto_cancelled', allTo, {
+            project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
           });
         }
-      }
-      // 前日警告（todayStr === warningStr のとき1回だけ）
-      else if (todayStr === warningStr) {
+      } else if (todayStr === warningStr) {
         const allTo = await buildRecipients(p.sales_rep);
         if (allTo.length) {
-          await sendEmail({
-            to: allTo,
-            subject: `【警告】明日自動キャンセル予定：${p.project_type}（${p.client_name}）`,
-            html: makeEmailHtml('⚠️ 明日自動キャンセルされます', [
-              ['案件内容', `<b>${p.project_type}</b>`],
-              ['顧客名', p.client_name],
-              ['担当営業', p.sales_rep],
-              ['自動キャンセル日', deadlineStr],
-              ['理由', '仮スケジュール設定から10営業日経過'],
-            ], '本日中にスケジュールを確定するか、担当者に連絡してください。'),
+          await sendTemplatedEmail('auto_cancel_warning', allTo, {
+            project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+            deadline_date: deadlineStr,
           });
         }
-        console.log(`[AutoCancel Warning] ${p.id} ${p.project_type} - cancels tomorrow`);
       }
     }
-  } catch (e) {
-    console.error('[AutoCancel error]', e.message);
-  }
+  } catch (e) { console.error('[AutoCancel error]', e.message); }
 }
 
-// ── 削除 ─────────────────────────────────────────────────────
 app.delete('/api/projects/:id', async (req, res) => {
   await pool.query('DELETE FROM projects WHERE id=$1', [req.params.id]);
   res.json({ success: true });
@@ -582,8 +656,6 @@ app.get('*', (_req, res) => {
 
 initDB().then(() => {
   app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
-  // 1時間ごとに強制キャンセルチェック
   setInterval(runAutoCancel, 60 * 60 * 1000);
-  // 起動時も1回実行
   runAutoCancel();
 }).catch(err => { console.error('DB init failed:', err); process.exit(1); });
