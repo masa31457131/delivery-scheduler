@@ -5,53 +5,46 @@ import { StatusBadge, formatDate, relativeTime } from '../components/StatusBadge
 
 const DELIVERY_ICONS = { remote: '🖥', onsite: '🚗' };
 
+const STATUS_FILTERS = [
+  { key: 'pending',   label: '候補日待ち' },
+  { key: 'scheduled', label: '仮スケ設定済' },
+  { key: 'confirmed', label: '確定済み' },
+  { key: 'delivered', label: '納品済み' },
+  { key: 'cancelled', label: 'キャンセル' },
+];
+
 export default function DashboardPage({ onNavigate }) {
   const { user } = useAuth();
-  // 営業はデフォルト「mine」、管理者は「all」
-  const [filter, setFilter] = useState(user.role === 'sales' ? 'mine' : 'all');
+  // デフォルトは「候補日待ち」（営業・管理者共通）
+  const [statusFilter, setStatusFilter] = useState('pending');
+  // 管理者用：表示対象メンバー（'all' または 営業の display_name）
+  const [memberFilter, setMemberFilter] = useState('all');
+  const [salesUsers, setSalesUsers] = useState([]);
   const [projects, setProjects] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // 「全メンバー」は必ず最後に表示
-  const FILTERS = user.role === 'sales'
-    ? [
-        { key: 'mine',      label: '候補日待ち', statusFilter: 'pending' },
-        { key: 'mine_sched',label: '仮スケ設定済', statusFilter: 'scheduled' },
-        { key: 'mine_conf', label: '確定済み', statusFilter: 'confirmed' },
-        { key: 'mine_cancel',label: 'キャンセル', statusFilter: 'cancelled' },
-        { key: 'all',       label: '全メンバー' },
-      ]
-    : [
-        { key: 'all_pending',   label: '候補日待ち', statusFilter: 'pending' },
-        { key: 'all_sched',     label: '仮スケ設定済', statusFilter: 'scheduled' },
-        { key: 'all_confirmed', label: '確定済み', statusFilter: 'confirmed' },
-        { key: 'all_delivered', label: '納品済み', statusFilter: 'delivered' },
-        { key: 'all_cancelled', label: 'キャンセル', statusFilter: 'cancelled' },
-        { key: 'all', label: '全メンバー' },
-      ];
-
   useEffect(() => {
-    Promise.all([api.getProjects(), api.getStats()])
-      .then(([p, s]) => { setProjects(p); setStats(s); })
-      .finally(() => setLoading(false));
+    const calls = [api.getProjects(), api.getStats()];
+    if (user.role === 'admin') calls.push(api.getUsers());
+    Promise.all(calls).then(([p, s, u]) => {
+      setProjects(p);
+      setStats(s);
+      if (u) setSalesUsers(u);
+    }).finally(() => setLoading(false));
   }, []);
 
   const filtered = projects.filter(p => {
-    if (filter === 'all') return true;
-    const def = FILTERS.find(f => f.key === filter);
-    if (!def) return true;
-    const matchStatus = def.statusFilter ? p.status === def.statusFilter : true;
-    // 営業の場合は自分の案件のみに絞る（'all'以外）
-    if (user.role === 'sales') {
-      return matchStatus && p.sales_rep === user.name;
-    }
-    return matchStatus;
+    if (p.status !== statusFilter) return false;
+    if (user.role === 'sales') return p.sales_rep === user.name;
+    // 管理者：メンバーフィルター適用
+    if (memberFilter === 'all') return true;
+    return p.sales_rep === memberFilter;
   });
 
-  const pageSubText = filter === 'all'
-    ? '全メンバーの案件'
-    : (user.role === 'sales' ? `${user.name}の案件` : '案件一覧');
+  const pageSubText = user.role === 'sales'
+    ? `${user.name}の案件`
+    : (memberFilter === 'all' ? '全メンバーの案件' : `${memberFilter}の案件`);
 
   return (
     <>
@@ -67,9 +60,24 @@ export default function DashboardPage({ onNavigate }) {
         </div>
       )}
 
+      {/* 管理者専用：メンバー切り替え */}
+      {user.role === 'admin' && (
+        <div className="filter-bar">
+          <button className={`filter-chip ${memberFilter === 'all' ? 'active' : ''}`} onClick={() => setMemberFilter('all')}>
+            👥 全メンバー
+          </button>
+          {salesUsers.map(u => (
+            <button key={u.id} className={`filter-chip ${memberFilter === u.display_name ? 'active' : ''}`} onClick={() => setMemberFilter(u.display_name)}>
+              {u.display_name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ステータスフィルター */}
       <div className="filter-bar">
-        {FILTERS.map(f => (
-          <button key={f.key} className={`filter-chip ${filter === f.key ? 'active' : ''}`} onClick={() => setFilter(f.key)}>
+        {STATUS_FILTERS.map(f => (
+          <button key={f.key} className={`filter-chip ${statusFilter === f.key ? 'active' : ''}`} onClick={() => setStatusFilter(f.key)}>
             {f.label}
           </button>
         ))}
@@ -87,14 +95,14 @@ export default function DashboardPage({ onNavigate }) {
         </div>
       ) : (
         filtered.map(project => (
-          <ProjectCard key={project.id} project={project} onNavigate={onNavigate} showSalesRep={filter === 'all'} />
+          <ProjectCard key={project.id} project={project} onNavigate={onNavigate} />
         ))
       )}
     </>
   );
 }
 
-function ProjectCard({ project, onNavigate, showSalesRep }) {
+function ProjectCard({ project, onNavigate }) {
   const hasCandidates = project.candidates?.length > 0;
   const hasConfirmed  = !!project.confirmed_date && project.status === 'confirmed';
   const isCancelled = project.status === 'cancelled';

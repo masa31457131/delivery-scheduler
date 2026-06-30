@@ -18,19 +18,28 @@ export default function CalendarPage({ onNavigate }) {
   const { user } = useAuth();
   const [projects, setProjects] = useState([]);
   const [blockedDates, setBlockedDates] = useState([]);
+  const [salesUsers, setSalesUsers] = useState([]);
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [selected, setSelected] = useState(null);
-  // 営業はデフォルト「自分」、管理者は「全メンバー」
+  // 営業：'mine' のみ。管理者：'all' または営業の display_name
   const [scope, setScope] = useState(user.role === 'sales' ? 'mine' : 'all');
 
   useEffect(() => {
-    Promise.all([api.getProjects(), api.getBlockedDates()])
-      .then(([p, b]) => { setProjects(p); setBlockedDates(b); });
+    const calls = [api.getProjects(), api.getBlockedDates()];
+    if (user.role === 'admin') calls.push(api.getUsers());
+    Promise.all(calls).then(([p, b, u]) => {
+      setProjects(p); setBlockedDates(b);
+      if (u) setSalesUsers(u);
+    });
   }, []);
 
-  const visibleProjects = scope === 'mine' ? projects.filter(p => p.sales_rep === user.name) : projects;
+  const visibleProjects = scope === 'mine'
+    ? projects.filter(p => p.sales_rep === user.name)
+    : scope === 'all'
+      ? projects
+      : projects.filter(p => p.sales_rep === scope); // 管理者がメンバー個別指定
 
   const days = getMonthDays(year, month);
   const toKey = d => d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : null;
@@ -63,12 +72,24 @@ export default function CalendarPage({ onNavigate }) {
   return (
     <>
       <div className="page-title">カレンダー</div>
-      <div className="page-sub">{scope === 'mine' ? `${user.name}のスケジュール` : '全メンバーのスケジュール'}</div>
-
-      <div className="filter-bar" style={{ marginBottom: 16 }}>
-        <button className={`filter-chip ${scope === 'mine' ? 'active' : ''}`} onClick={() => setScope('mine')}>自分の案件</button>
-        <button className={`filter-chip ${scope === 'all' ? 'active' : ''}`} onClick={() => setScope('all')}>全メンバー</button>
+      <div className="page-sub">
+        {scope === 'mine' ? `${user.name}のスケジュール` : scope === 'all' ? '全メンバーのスケジュール' : `${scope}のスケジュール`}
       </div>
+
+      {user.role === 'sales' ? (
+        <div className="filter-bar" style={{ marginBottom: 16 }}>
+          <button className="filter-chip active">自分の案件</button>
+        </div>
+      ) : (
+        <div className="filter-bar" style={{ marginBottom: 16 }}>
+          <button className={`filter-chip ${scope === 'all' ? 'active' : ''}`} onClick={() => setScope('all')}>👥 全メンバー</button>
+          {salesUsers.map(u => (
+            <button key={u.id} className={`filter-chip ${scope === u.display_name ? 'active' : ''}`} onClick={() => setScope(u.display_name)}>
+              {u.display_name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <button className="btn btn-ghost btn-sm" onClick={prevMonth}>‹</button>

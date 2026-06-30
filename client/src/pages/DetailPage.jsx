@@ -139,11 +139,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const isPending = project.status === 'pending';
   const isScheduled = project.status === 'scheduled';
 
-  // 候補日編集権限：営業（自分）または管理者、キャンセル・納品済み以外
-  const canEditCandidates = (isOwner || isAdmin) && !isCancelled && !isDelivered;
-  // 確定ボタン表示：候補日がある状態で、自分または管理者
+  // 候補日の追加・削除：管理者のみ（営業は候補日を設定できない）
+  const canEditCandidates = isAdmin && !isCancelled && !isDelivered;
+  // 確定ボタン表示：候補日がある状態で、担当営業または管理者
   const canConfirm = isScheduled && (isOwner || isAdmin) && !isCancelled;
-  // リマインドボタン：候補日待ち（pending）のときのみ、担当者
+  // リマインドボタン：候補日待ち（pending）のときのみ、担当営業または管理者
   const canRemind = isPending && (isOwner || isAdmin);
   // キャンセルボタン：キャンセル・納品済み以外なら誰でも
   const canCancel = !isCancelled && !isDelivered;
@@ -321,7 +321,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
           {/* 候補日一覧 */}
           {!isConfirmed && (!project.candidates || project.candidates.length === 0) && (
             <div style={{ color: 'var(--text-sub)', fontSize: '0.85rem' }}>
-              {isPending ? '管理者が候補日を設定します' : '候補日がありません'}
+              {isPending ? '🗓 管理者が候補日を設定します（営業からの設定はできません）' : '候補日がありません'}
             </div>
           )}
           {!isConfirmed && project.candidates?.map(c => (
