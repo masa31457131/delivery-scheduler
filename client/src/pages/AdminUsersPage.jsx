@@ -523,6 +523,7 @@ function EmailTab({ addToast }) {
 // ── メールテンプレート編集 ─────────────────────────────────────
 const TEMPLATE_LABELS = {
   schedule_proposed:   { label: '📝 新規依頼通知', desc: '営業が案件を登録したとき' },
+  candidates_set:      { label: '🗓 候補日設定完了', desc: '管理者が候補日の設定を完了したとき' },
   schedule_confirmed:  { label: '✅ スケジュール確定', desc: '営業が候補日を確定したとき' },
   schedule_cancelled:  { label: '❌ キャンセル通知', desc: '案件がキャンセルされたとき' },
   reminder:            { label: '🔔 リマインド', desc: '営業がリマインドボタンを押したとき' },
@@ -531,6 +532,7 @@ const TEMPLATE_LABELS = {
 };
 const AVAILABLE_VARS = {
   schedule_proposed:   ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'candidate_days', 'memo'],
+  candidates_set:      ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'candidate_list'],
   schedule_confirmed:  ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'confirmed_date'],
   schedule_cancelled:  ['project_type', 'client_name', 'sales_rep', 'confirmed_date', 'cancel_reason'],
   reminder:            ['project_type', 'client_name', 'sales_rep', 'candidate_days', 'created_at'],

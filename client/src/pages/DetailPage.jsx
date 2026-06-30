@@ -93,6 +93,12 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     if (conflicts?.blocked || conflicts?.sales_reps?.length >= 2) {
       addToast('この日程は登録できません', 'error'); return;
     }
+    const maxDays = project.candidate_days || 1;
+    const currentCount = project.candidates?.length || 0;
+    if (currentCount >= maxDays) {
+      addToast(`希望候補日数（${maxDays}日）を超えて登録することはできません`, 'error');
+      return;
+    }
     setBusy(true);
     try {
       const updatedCands = await api.addCandidate(projectId, newCandidate);
@@ -101,6 +107,29 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       setConflicts(null);
       setShowAddForm(false);
       addToast('候補日を追加しました');
+      onRefresh();
+    } catch (err) { addToast(err.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  // 候補日の設定完了（希望日数ちょうどでなければアラート）
+  const handleFinalizeCandidates = async () => {
+    const maxDays = project.candidate_days || 1;
+    const currentCount = project.candidates?.length || 0;
+    if (currentCount > maxDays) {
+      addToast(`希望候補日数（${maxDays}日）を超えています。候補日を${maxDays}件以下に調整してください`, 'error');
+      return;
+    }
+    if (currentCount < maxDays) {
+      addToast(`希望候補日数は${maxDays}日です。あと${maxDays - currentCount}件、候補日を追加してください`, 'error');
+      return;
+    }
+    if (!confirm(`候補日${currentCount}件で設定完了とし、管理者と${project.sales_rep}さんに通知メールを送信しますか？`)) return;
+    setBusy(true);
+    try {
+      const updated = await api.finalizeCandidates(projectId);
+      setProject(updated);
+      addToast('候補日の設定が完了し、通知メールを送信しました');
       onRefresh();
     } catch (err) { addToast(err.message, 'error'); }
     finally { setBusy(false); }
@@ -276,7 +305,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
             <div className="section-title" style={{ marginBottom: 0 }}>
               {isConfirmed ? '確定スケジュール' : '候補日'}
             </div>
-            {canEditCandidates && !isConfirmed && (project.candidates?.length || 0) < 3 && (
+            {canEditCandidates && !isConfirmed && (project.candidates?.length || 0) < (project.candidate_days || 1) && (
               <button className="btn btn-ghost btn-sm" onClick={() => setShowAddForm(v => !v)}>
                 {showAddForm ? '閉じる' : '+ 追加'}
               </button>
@@ -288,7 +317,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
             <form onSubmit={handleAddCandidate} style={{ marginBottom: 12, padding: 12,
               background: 'rgba(59,130,246,0.06)', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)' }}>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', marginBottom: 8 }}>
-                第{(project.candidates?.length || 0) + 1}候補を追加
+                第{(project.candidates?.length || 0) + 1}候補を追加（希望候補日数：{project.candidate_days || 1}日）
               </div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                 <input type="date" style={{ flex: 1 }} value={newCandidate.date}
@@ -362,6 +391,36 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
               </div>
             </div>
           ))}
+
+          {/* 候補日の進捗表示と設定完了ボタン（管理者・候補日待ち〜仮スケ設定中） */}
+          {!isConfirmed && isAdmin && (isPending || isScheduled) && (
+            <div style={{ marginTop: 12 }}>
+              {(() => {
+                const maxDays = project.candidate_days || 1;
+                const currentCount = project.candidates?.length || 0;
+                const isExact = currentCount === maxDays;
+                const isOver = currentCount > maxDays;
+                const isUnder = currentCount < maxDays;
+                return (
+                  <>
+                    <div style={{
+                      padding: '8px 12px', borderRadius: 8, marginBottom: 10, fontSize: '0.8rem',
+                      background: isExact ? 'rgba(16,185,129,0.08)' : isOver ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
+                      border: `1px solid ${isExact ? 'rgba(16,185,129,0.25)' : isOver ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`,
+                      color: isExact ? 'var(--success)' : isOver ? 'var(--danger)' : 'var(--warning)',
+                    }}>
+                      {isExact && `✅ 候補日 ${currentCount}/${maxDays} 件 — 希望日数ちょうどです`}
+                      {isOver && `⚠️ 候補日 ${currentCount}/${maxDays} 件 — 希望日数を超えています。${currentCount - maxDays}件削除してください`}
+                      {isUnder && `🗓 候補日 ${currentCount}/${maxDays} 件 — あと${maxDays - currentCount}件追加してください`}
+                    </div>
+                    <button className="btn btn-success btn-full" onClick={handleFinalizeCandidates} disabled={busy || currentCount === 0}>
+                      候補日の設定完了（通知メールを送信）
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          )}
         </div>
       )}
 
