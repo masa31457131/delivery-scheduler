@@ -542,14 +542,18 @@ app.post('/api/projects', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [id]);
   const project = { ...rows[0], candidates: [] };
 
-  const settings = await getEmailSettings();
-  if (settings.notify_emails?.length) {
-    await sendTemplatedEmail('schedule_proposed', settings.notify_emails, {
+  // 管理者通知アドレス ＋ 担当営業のメールアドレス両方に送信
+  const allTo = await buildRecipients(sales_rep);
+  if (allTo.length) {
+    const result = await sendTemplatedEmail('schedule_proposed', allTo, {
       project_type, client_name, sales_rep,
       delivery_method: DELIVERY_LABEL(delivery_method),
       candidate_days: candidate_days || 1,
       memo: memo || 'なし',
     });
+    if (result?.error) console.error('[新規依頼メール送信エラー]', result.error);
+  } else {
+    console.log('[新規依頼メール スキップ] 送信先アドレスが登録されていません');
   }
   res.status(201).json(project);
 });
