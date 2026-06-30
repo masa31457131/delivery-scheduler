@@ -250,15 +250,16 @@ async function initDB() {
     await client.query(`UPDATE users SET display_name = name WHERE display_name IS NULL`);
     await client.query(`UPDATE users SET login_id = name WHERE login_id IS NULL`);
     await client.query(`ALTER TABLE users ADD CONSTRAINT users_login_id_unique UNIQUE (login_id)`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS area TEXT DEFAULT '東京'`);
     // projects.sales_rep は login_id を保持する想定（既存データは name=login_id のため互換）
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
     if (parseInt(rows[0].c) === 0) {
       await client.query(
-        `INSERT INTO users (id,name,display_name,login_id,role,password,email) VALUES
-         ($1,'管理者','管理者','admin','admin','admin123',''),
-         ($2,'営業 山田','山田 太郎','yamada','sales','sales123',''),
-         ($3,'営業 田中','田中 一郎','tanaka','sales','sales456','')`,
+        `INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES
+         ($1,'管理者','管理者','admin','admin','admin123','','東京'),
+         ($2,'営業 山田','山田 太郎','yamada','sales','sales123','','東京'),
+         ($3,'営業 田中','田中 一郎','tanaka','sales','sales456','','大阪')`,
         [uuidv4(), uuidv4(), uuidv4()]
       );
     }
@@ -281,38 +282,38 @@ if (fs.existsSync(CLIENT_BUILD)) app.use(express.static(CLIENT_BUILD));
 app.post('/api/auth/login', async (req, res) => {
   const { name, password } = req.body; // name パラメータに login_id を入れて送ってもらう（互換維持）
   const { rows } = await pool.query(
-    'SELECT id,name,display_name,login_id,role FROM users WHERE login_id=$1 AND password=$2',
+    'SELECT id,name,display_name,login_id,role,area FROM users WHERE login_id=$1 AND password=$2',
     [name, password]
   );
   if (!rows[0]) return res.status(401).json({ error: 'ログインIDまたはパスワードが違います' });
   const u = rows[0];
-  res.json({ id: u.id, name: u.display_name || u.name, login_id: u.login_id, role: u.role });
+  res.json({ id: u.id, name: u.display_name || u.name, login_id: u.login_id, role: u.role, area: u.area || '東京' });
 });
 
-// ── Users ─────────────────────────────────────────────────────
+// ── Users（営業） ────────────────────────────────────────────
 app.get('/api/users', async (_req, res) => {
   const { rows } = await pool.query(
-    "SELECT id,display_name,login_id,email FROM users WHERE role='sales' ORDER BY display_name"
+    "SELECT id,display_name,login_id,email,area FROM users WHERE role='sales' ORDER BY display_name"
   );
   res.json(rows);
 });
 app.post('/api/users', async (req, res) => {
-  const { display_name, login_id, password, email } = req.body;
+  const { display_name, login_id, password, email, area } = req.body;
   if (!display_name || !login_id || !password) return res.status(400).json({ error: '表示名・ログインID・パスワードは必須です' });
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
   await pool.query(
-    'INSERT INTO users (id,name,display_name,login_id,role,password,email) VALUES ($1,$2,$2,$3,$4,$5,$6)',
-    [id, display_name, login_id, 'sales', password, email || '']
+    'INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
+    [id, display_name, login_id, 'sales', password, email || '', area || '東京']
   );
-  res.status(201).json({ id, display_name, login_id, role: 'sales', email: email || '' });
+  res.status(201).json({ id, display_name, login_id, role: 'sales', email: email || '', area: area || '東京' });
 });
 app.put('/api/users/:id', async (req, res) => {
-  const { display_name, login_id, password, email } = req.body;
+  const { display_name, login_id, password, email, area } = req.body;
   const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'ユーザーが見つかりません' });
-  if (rows[0].role === 'admin') return res.status(403).json({ error: '管理者アカウントは変更できません' });
+  if (rows[0].role === 'admin') return res.status(403).json({ error: 'このAPIでは管理者アカウントを変更できません（/api/admins を使用してください）' });
   if (login_id) {
     const dup = await pool.query('SELECT id FROM users WHERE login_id=$1 AND id!=$2', [login_id, req.params.id]);
     if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
@@ -323,17 +324,70 @@ app.put('/api/users/:id', async (req, res) => {
       name=COALESCE($1,name),
       login_id=COALESCE($2,login_id),
       password=COALESCE($3,password),
-      email=COALESCE($4,email)
-     WHERE id=$5`,
-    [display_name || null, login_id || null, password || null, email !== undefined ? email : null, req.params.id]
+      email=COALESCE($4,email),
+      area=COALESCE($5,area)
+     WHERE id=$6`,
+    [display_name || null, login_id || null, password || null, email !== undefined ? email : null, area || null, req.params.id]
   );
-  const { rows: u } = await pool.query('SELECT id,display_name,login_id,email FROM users WHERE id=$1', [req.params.id]);
+  const { rows: u } = await pool.query('SELECT id,display_name,login_id,email,area FROM users WHERE id=$1', [req.params.id]);
   res.json(u[0]);
 });
 app.delete('/api/users/:id', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'ユーザーが見つかりません' });
-  if (rows[0].role === 'admin') return res.status(403).json({ error: '管理者アカウントは削除できません' });
+  if (rows[0].role === 'admin') return res.status(403).json({ error: 'このAPIでは管理者アカウントを削除できません' });
+  await pool.query('DELETE FROM users WHERE id=$1', [req.params.id]);
+  res.json({ success: true });
+});
+
+// ── Admins（管理者の複数管理） ──────────────────────────────────
+app.get('/api/admins', async (_req, res) => {
+  const { rows } = await pool.query(
+    "SELECT id,display_name,login_id,email,area FROM users WHERE role='admin' ORDER BY display_name"
+  );
+  res.json(rows);
+});
+app.post('/api/admins', async (req, res) => {
+  const { display_name, login_id, password, email, area } = req.body;
+  if (!display_name || !login_id || !password) return res.status(400).json({ error: '表示名・ログインID・パスワードは必須です' });
+  const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
+  if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
+  const id = uuidv4();
+  await pool.query(
+    'INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
+    [id, display_name, login_id, 'admin', password, email || '', area || '東京']
+  );
+  res.status(201).json({ id, display_name, login_id, role: 'admin', email: email || '', area: area || '東京' });
+});
+app.put('/api/admins/:id', async (req, res) => {
+  const { display_name, login_id, password, email, area } = req.body;
+  const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: '管理者が見つかりません' });
+  if (rows[0].role !== 'admin') return res.status(400).json({ error: '管理者アカウントではありません' });
+  if (login_id) {
+    const dup = await pool.query('SELECT id FROM users WHERE login_id=$1 AND id!=$2', [login_id, req.params.id]);
+    if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
+  }
+  await pool.query(
+    `UPDATE users SET
+      display_name=COALESCE($1,display_name),
+      name=COALESCE($1,name),
+      login_id=COALESCE($2,login_id),
+      password=COALESCE($3,password),
+      email=COALESCE($4,email),
+      area=COALESCE($5,area)
+     WHERE id=$6`,
+    [display_name || null, login_id || null, password || null, email !== undefined ? email : null, area || null, req.params.id]
+  );
+  const { rows: u } = await pool.query('SELECT id,display_name,login_id,email,area FROM users WHERE id=$1', [req.params.id]);
+  res.json(u[0]);
+});
+app.delete('/api/admins/:id', async (req, res) => {
+  const { rows: allAdmins } = await pool.query("SELECT id FROM users WHERE role='admin'");
+  if (allAdmins.length <= 1) return res.status(400).json({ error: '最後の管理者アカウントは削除できません' });
+  const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: '管理者が見つかりません' });
+  if (rows[0].role !== 'admin') return res.status(400).json({ error: '管理者アカウントではありません' });
   await pool.query('DELETE FROM users WHERE id=$1', [req.params.id]);
   res.json({ success: true });
 });
