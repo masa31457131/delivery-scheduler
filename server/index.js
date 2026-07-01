@@ -646,7 +646,7 @@ app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
   if (cands.length === 0) return res.status(400).json({ error: '候補日が1件も登録されていません' });
   const maxDays = p.candidate_days || 1;
   if (cands.length > maxDays) return res.status(400).json({ error: `希望候補日数（${maxDays}日）を超えています。${cands.length - maxDays}件削除してください。` });
-  if (cands.length < maxDays) return res.status(400).json({ error: `希望候補日数は${maxDays}日です。あと${maxDays - cands.length}件追加してください。` });
+  // 候補日不足の場合も shortage_reason が入力済みであれば完了できる（フロントで事前に保存）
 
   await pool.query("UPDATE projects SET status='scheduled', updated_at=NOW() WHERE id=$1", [req.params.id]);
   const { rows: updatedProject } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
@@ -680,12 +680,7 @@ app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
   const csMembersArr = cs_members || p.cs_members || [];
   const csMembersJson = JSON.stringify(csMembersArr);
 
-  // 不足理由チェック：候補日1件以上あるのに確定した場合、候補日数<希望日数なら理由必須
-  const { rows: cands } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
-  const needsReason = cands.length < (p.candidate_days || 1);
-  if (needsReason && !shortage_reason?.trim()) {
-    return res.status(400).json({ error: '希望日数より少ない候補日での確定です。理由を入力してください。' });
-  }
+  // 不足理由は finalize 時に既に保存済み（confirm-schedule 時点では不要）
 
   await pool.query(
     `UPDATE projects SET confirmed_date=$1, status='confirmed', scheduled_at=NOW(), updated_at=NOW(), cs_members=$2, shortage_reason=$3 WHERE id=$4`,
