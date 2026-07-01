@@ -15,7 +15,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
 
   // 候補日追加フォーム
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '' });
+  const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '', cs_members: [] });
   const [conflicts, setConflicts] = useState(null);
 
   // 確定モーダル（CS部員選択）
@@ -146,7 +146,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     try {
       const updatedCands = await api.addCandidate(projectId, newCandidate);
       setProject(p => ({ ...p, candidates: updatedCands }));
-      setNewCandidate({ date: '', date_to: '', time: '' });
+      setNewCandidate({ date: '', date_to: '', time: '', cs_members: [] });
       setConflicts(null);
       setShowAddForm(false);
       addToast('候補日を追加しました');
@@ -448,6 +448,46 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                 <input type="time" style={{ width:130 }} value={newCandidate.time}
                   onChange={e => { setNewCandidate(c => ({ ...c, time: e.target.value })); checkConflict(newCandidate.date, e.target.value); }} />
               </div>
+              {/* 候補日ごとのCS部員選択（管理者のみ） */}
+              {isAdmin && csMembers.length > 0 && (
+                <div style={{ marginBottom:8 }}>
+                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:6,fontWeight:600 }}>
+                    この候補日のCS部員（任意・最大2名）
+                  </div>
+                  <div style={{ display:'flex',flexDirection:'column',gap:4 }}>
+                    {csMembers.map(m => {
+                      const checked = (newCandidate.cs_members || []).includes(m.display_name);
+                      return (
+                        <label key={m.id} style={{
+                          display:'flex',alignItems:'center',gap:8,padding:'6px 10px',borderRadius:6,cursor:'pointer',
+                          background: checked ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.03)',
+                          border:`1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
+                        }}>
+                          <input type="checkbox" checked={checked}
+                            onChange={() => {
+                              setNewCandidate(prev => {
+                                const cur = prev.cs_members || [];
+                                if (cur.includes(m.display_name)) {
+                                  return { ...prev, cs_members: cur.filter(n => n !== m.display_name) };
+                                }
+                                if (cur.length >= 2) { addToast('CS部員は最大2名まで選択できます', 'error'); return prev; }
+                                return { ...prev, cs_members: [...cur, m.display_name] };
+                              });
+                            }}
+                            style={{ width:'auto',margin:0 }} />
+                          <span style={{ flex:1,fontSize:'0.85rem' }}>{m.display_name}</span>
+                          <span style={{ fontSize:'0.65rem',padding:'1px 6px',borderRadius:99,background:'rgba(59,130,246,0.12)',color:'var(--accent-lt)' }}>📍{m.area}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {(newCandidate.cs_members || []).length > 0 && (
+                    <div style={{ fontSize:'0.72rem',color:'var(--accent-lt)',marginTop:4 }}>
+                      選択中：{(newCandidate.cs_members || []).join('、')}
+                    </div>
+                  )}
+                </div>
+              )}
               {conflicts && (
                 conflicts.blocked ? (
                   <div style={{ fontSize:'0.78rem',color:'var(--danger)',marginBottom:8 }}>
@@ -486,9 +526,14 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
           )}
           {!isConfirmed && cands.map(c => (
             <div key={c.id} className="confirm-card">
-              <div>
+              <div style={{ flex:1 }}>
                 <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:2 }}>{c.label}</div>
                 <div className="confirm-date">{formatCandDate(c)}</div>
+                {(c.cs_members || []).length > 0 && (
+                  <div style={{ fontSize:'0.72rem',color:'var(--accent-lt)',marginTop:3 }}>
+                    🛠 CS：{(c.cs_members || []).join('、')}
+                  </div>
+                )}
               </div>
               <div style={{ display:'flex',gap:8 }}>
                 {canConfirm && (
@@ -519,39 +564,23 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                 {candidatesShort && `🗓 候補日 ${cands.length}/${maxDays} 件 — あと${maxDays - cands.length}件追加してください`}
               </div>
 
-              {/* CS部員選択（管理者のみ・ここで設定する） */}
-              <div style={{ marginBottom:12 }}>
-                <div style={{ fontSize:'0.78rem',fontWeight:700,color:'var(--text-sub)',letterSpacing:'0.05em',textTransform:'uppercase',marginBottom:8 }}>
-                  CS部員を選択（最大2名・東西問わず）
-                </div>
-                {csMembers.length === 0 ? (
-                  <div style={{ fontSize:'0.8rem',color:'var(--text-sub)' }}>
-                    CS部員が未登録です（管理者設定 → 🛠 CS部員 から追加してください）
+              {/* 候補日ごとのCS担当まとめ表示 */}
+              {(() => {
+                const allCs = [...new Set(cands.flatMap(c => c.cs_members || []))];
+                return allCs.length > 0 ? (
+                  <div style={{ marginBottom:12,padding:'8px 12px',background:'rgba(59,130,246,0.06)',border:'1px solid rgba(59,130,246,0.2)',borderRadius:8 }}>
+                    <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>設定済みCS担当者（各候補日に設定）</div>
+                    <div style={{ fontSize:'0.85rem',color:'var(--accent-lt)' }}>🛠 {allCs.join('、')}</div>
+                    <div style={{ fontSize:'0.7rem',color:'var(--text-sub)',marginTop:4 }}>
+                      ※ 各候補日のCS部員は候補日追加フォームで変更できます
+                    </div>
                   </div>
                 ) : (
-                  <div style={{ display:'flex',flexDirection:'column',gap:6 }}>
-                    {csMembers.map(m => (
-                      <label key={m.id} style={{
-                        display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:8,cursor:'pointer',
-                        background: selectedCs.includes(m.display_name) ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
-                        border:`1px solid ${selectedCs.includes(m.display_name) ? 'var(--accent)' : 'var(--border)'}`,
-                      }}>
-                        <input type="checkbox" checked={selectedCs.includes(m.display_name)}
-                          onChange={() => toggleCs(m.display_name)} style={{ width:'auto',margin:0 }} />
-                        <span style={{ flex:1,fontSize:'0.88rem' }}>{m.display_name}</span>
-                        <span style={{ fontSize:'0.68rem',padding:'1px 7px',borderRadius:99,background:'rgba(59,130,246,0.12)',color:'var(--accent-lt)' }}>
-                          📍{m.area}
-                        </span>
-                      </label>
-                    ))}
+                  <div style={{ marginBottom:12,padding:'8px 12px',background:'rgba(255,255,255,0.03)',border:'1px solid var(--border)',borderRadius:8,fontSize:'0.8rem',color:'var(--text-sub)' }}>
+                    🛠 CS部員未選択（候補日追加フォームで選択してください）
                   </div>
-                )}
-                {selectedCs.length > 0 && (
-                  <div style={{ fontSize:'0.75rem',color:'var(--accent-lt)',marginTop:6 }}>
-                    選択中：{selectedCs.join('、')}（{selectedCs.length}/2名）
-                  </div>
-                )}
-              </div>
+                );
+              })()}
 
               <button className="btn btn-success btn-full" onClick={handleFinalizeCandidates}
                 disabled={busy || cands.length === 0}>
