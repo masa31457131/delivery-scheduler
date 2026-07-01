@@ -11,11 +11,18 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [salesUsers, setSalesUsers] = useState([]);
+  const [csMembers, setCsMembers] = useState([]);
 
   // 候補日追加フォーム
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newCandidate, setNewCandidate] = useState({ date: '', time: '' });
+  const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '' });
   const [conflicts, setConflicts] = useState(null);
+
+  // 確定モーダル（CS部員選択・不足理由）
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState(null);
+  const [selectedCs, setSelectedCs] = useState([]);
+  const [shortageReason, setShortageReason] = useState('');
 
   // キャンセルモーダル
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -23,38 +30,64 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
 
   const load = () => {
     setLoading(true);
-    api.getProject(projectId).then(setProject).finally(() => setLoading(false));
+    api.getProject(projectId).then(p => {
+      setProject(p);
+      setSelectedCs(p.cs_members || []);
+    }).finally(() => setLoading(false));
   };
   useEffect(() => {
     load();
     api.getUsers().then(setSalesUsers).catch(() => {});
+    api.getCsMembers().then(setCsMembers).catch(() => {});
   }, [projectId]);
 
-  // 担当営業のエリアを取得（候補日の予定不可チェックに使用）
   const projectArea = (() => {
     if (!project) return null;
     const u = salesUsers.find(u => u.display_name === project.sales_rep);
     return u?.area || '東京';
   })();
 
-  // 仮スケジュール確定（営業が実行）
-  const handleConfirmSchedule = async (candidate) => {
-    const dateStr = `${formatDate(candidate.candidate_date)}${candidate.candidate_time ? ' ' + candidate.candidate_time : ''}`;
-    if (!confirm(`「${dateStr}」でスケジュールを確定しますか？\n確定後はキャンセル以外の変更ができません。`)) return;
+  // 確定モーダルを開く
+  const openConfirmModal = (candidate) => {
+    setConfirmTarget(candidate);
+    setSelectedCs(project.cs_members || []);
+    setShortageReason('');
+    setShowConfirmModal(true);
+  };
+
+  // 仮スケジュール確定
+  const handleConfirmSchedule = async () => {
+    if (!confirmTarget) return;
+    if (selectedCs.length > 2) { addToast('CS部員は最大2名まで選択できます', 'error'); return; }
+    const cands = project.candidates || [];
+    const needsReason = cands.length < (project.candidate_days || 1);
+    if (needsReason && !shortageReason.trim()) {
+      addToast('希望日数より少ない候補日での確定です。理由を入力してください', 'error'); return;
+    }
     setBusy(true);
     try {
       const updated = await api.confirmSchedule(projectId, {
-        confirmed_date: candidate.candidate_date,
-        confirmed_time: candidate.candidate_time,
+        confirmed_date: confirmTarget.candidate_date,
+        confirmed_time: confirmTarget.candidate_time,
+        cs_members: selectedCs,
+        shortage_reason: shortageReason,
       });
       setProject(updated);
+      setShowConfirmModal(false);
       addToast('スケジュールを確定しました！');
       onRefresh();
     } catch (err) { addToast(err.message, 'error'); }
     finally { setBusy(false); }
   };
 
-  // キャンセル
+  const toggleCs = (name) => {
+    setSelectedCs(prev =>
+      prev.includes(name) ? prev.filter(n => n !== name)
+        : prev.length >= 2 ? (addToast('CS部員は最大2名まで選択できます', 'error'), prev)
+        : [...prev, name]
+    );
+  };
+
   const handleCancel = async () => {
     if (!cancelReason.trim()) { addToast('キャンセル理由を入力してください', 'error'); return; }
     setBusy(true);
@@ -69,7 +102,6 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     finally { setBusy(false); }
   };
 
-  // リマインドメール
   const handleRemind = async () => {
     if (!confirm('CS部管理者と自身にリマインドメールを送信しますか？')) return;
     setBusy(true);
@@ -80,30 +112,24 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     finally { setBusy(false); }
   };
 
-  // 候補日の重複チェック
   const checkConflict = async (date, time) => {
     if (!date) { setConflicts(null); return; }
     const result = await api.getConflicts(date, time, projectId, projectArea).catch(() => null);
     setConflicts(result);
   };
 
-  // 候補日追加
   const handleAddCandidate = async (e) => {
     e.preventDefault();
-    if (conflicts?.blocked || conflicts?.sales_reps?.length >= 2) {
-      addToast('この日程は登録できません', 'error'); return;
-    }
+    if (conflicts?.blocked || conflicts?.sales_reps?.length >= 2) { addToast('この日程は登録できません', 'error'); return; }
     const maxDays = project.candidate_days || 1;
-    const currentCount = project.candidates?.length || 0;
-    if (currentCount >= maxDays) {
-      addToast(`希望候補日数（${maxDays}日）を超えて登録することはできません`, 'error');
-      return;
+    if ((project.candidates?.length || 0) >= maxDays) {
+      addToast(`希望候補日数（${maxDays}日）を超えて登録することはできません`, 'error'); return;
     }
     setBusy(true);
     try {
       const updatedCands = await api.addCandidate(projectId, newCandidate);
-      setProject(p => ({ ...p, candidates: updatedCands, status: updatedCands.length > 0 ? 'scheduled' : 'pending' }));
-      setNewCandidate({ date: '', time: '' });
+      setProject(p => ({ ...p, candidates: updatedCands }));
+      setNewCandidate({ date: '', date_to: '', time: '' });
       setConflicts(null);
       setShowAddForm(false);
       addToast('候補日を追加しました');
@@ -112,18 +138,23 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     finally { setBusy(false); }
   };
 
-  // 候補日の設定完了（希望日数ちょうどでなければアラート）
+  const handleDeleteCandidate = async (candidateId) => {
+    if (!confirm('この候補日を削除しますか？')) return;
+    setBusy(true);
+    try {
+      const updatedCands = await api.deleteCandidate(projectId, candidateId);
+      setProject(p => ({ ...p, candidates: updatedCands }));
+      addToast('候補日を削除しました');
+      onRefresh();
+    } catch (err) { addToast(err.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
   const handleFinalizeCandidates = async () => {
     const maxDays = project.candidate_days || 1;
     const currentCount = project.candidates?.length || 0;
-    if (currentCount > maxDays) {
-      addToast(`希望候補日数（${maxDays}日）を超えています。候補日を${maxDays}件以下に調整してください`, 'error');
-      return;
-    }
-    if (currentCount < maxDays) {
-      addToast(`希望候補日数は${maxDays}日です。あと${maxDays - currentCount}件、候補日を追加してください`, 'error');
-      return;
-    }
+    if (currentCount > maxDays) { addToast(`希望候補日数（${maxDays}日）を超えています。${currentCount - maxDays}件削除してください`, 'error'); return; }
+    if (currentCount < maxDays) { addToast(`希望候補日数は${maxDays}日です。あと${maxDays - currentCount}件追加してください`, 'error'); return; }
     if (!confirm(`候補日${currentCount}件で設定完了とし、管理者と${project.sales_rep}さんに通知メールを送信しますか？`)) return;
     setBusy(true);
     try {
@@ -135,20 +166,6 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     finally { setBusy(false); }
   };
 
-  // 候補日削除
-  const handleDeleteCandidate = async (candidateId) => {
-    if (!confirm('この候補日を削除しますか？')) return;
-    setBusy(true);
-    try {
-      const updatedCands = await api.deleteCandidate(projectId, candidateId);
-      setProject(p => ({ ...p, candidates: updatedCands, status: updatedCands.length === 0 ? 'pending' : 'scheduled' }));
-      addToast('候補日を削除しました');
-      onRefresh();
-    } catch (err) { addToast(err.message, 'error'); }
-    finally { setBusy(false); }
-  };
-
-  // 管理者ステータス変更
   const handleStatusChange = async (newStatus) => {
     setBusy(true);
     try {
@@ -164,8 +181,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     if (!confirm('この案件を削除しますか？')) return;
     await api.deleteProject(projectId);
     addToast('案件を削除しました');
-    onRefresh();
-    onBack();
+    onRefresh(); onBack();
   };
 
   if (loading) return <div className="empty-state">読み込み中...</div>;
@@ -179,48 +195,109 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const isPending = project.status === 'pending';
   const isScheduled = project.status === 'scheduled';
 
-  // 候補日の追加・削除：管理者のみ（営業は候補日を設定できない）
-  const canEditCandidates = isAdmin && !isCancelled && !isDelivered;
-  // 確定ボタン表示：候補日が1件以上ある状態で、担当営業または管理者なら誰でも確定可能
-  // （ステータスが scheduled になっていなくても、候補日が存在すれば確定できるようにする）
+  const canEditCandidates = isAdmin && !isCancelled && !isDelivered && !isConfirmed;
   const hasAnyCandidates = (project.candidates?.length || 0) > 0;
   const canConfirm = hasAnyCandidates && (isOwner || isAdmin) && !isCancelled && !isConfirmed && !isDelivered;
-  // リマインドボタン：候補日待ち（pending）のときのみ、担当営業または管理者
   const canRemind = isPending && (isOwner || isAdmin);
-  // キャンセルボタン：キャンセル・納品済み以外なら誰でも
   const canCancel = !isCancelled && !isDelivered;
+
+  const cands = project.candidates || [];
+  const maxDays = project.candidate_days || 1;
+  const candidatesReady = cands.length === maxDays;
+  const candidatesShort = cands.length < maxDays;
+  const candidatesOver = cands.length > maxDays;
+
+  const formatCandDate = (c) => {
+    let s = formatDate(c.candidate_date);
+    if (c.candidate_date_to) s += `〜${formatDate(c.candidate_date_to)}`;
+    if (c.candidate_time) s += ` ${c.candidate_time}`;
+    return s;
+  };
 
   return (
     <>
+      {/* 確定モーダル */}
+      {showConfirmModal && confirmTarget && (
+        <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
+          <div style={{ background:'var(--navy-mid)',border:'1px solid var(--border)',borderRadius:16,padding:24,width:'100%',maxWidth:400,maxHeight:'90vh',overflowY:'auto' }}>
+            <div style={{ fontWeight:700,fontSize:'1.1rem',marginBottom:16 }}>📅 スケジュールを確定</div>
+
+            <div style={{ padding:'10px 12px',background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.25)',borderRadius:8,marginBottom:16 }}>
+              <div style={{ fontSize:'0.72rem',color:'var(--success)',marginBottom:2 }}>確定日</div>
+              <div style={{ fontWeight:600,color:'var(--success)' }}>
+                {formatCandDate(confirmTarget)}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>CS部員を選択（最大2名・東西問わず）</label>
+              <div style={{ display:'flex',flexDirection:'column',gap:6,marginTop:4 }}>
+                {csMembers.length === 0 ? (
+                  <div style={{ fontSize:'0.8rem',color:'var(--text-sub)' }}>CS部員が登録されていません（管理者設定で追加してください）</div>
+                ) : csMembers.map(m => (
+                  <label key={m.id} style={{
+                    display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:8,cursor:'pointer',
+                    background: selectedCs.includes(m.display_name) ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
+                    border:`1px solid ${selectedCs.includes(m.display_name) ? 'var(--accent)' : 'var(--border)'}`,
+                  }}>
+                    <input type="checkbox" checked={selectedCs.includes(m.display_name)}
+                      onChange={() => toggleCs(m.display_name)} style={{ width:'auto',margin:0 }} />
+                    <span style={{ flex:1,fontSize:'0.9rem' }}>{m.display_name}</span>
+                    <span style={{ fontSize:'0.72rem',padding:'1px 7px',borderRadius:99,background:'rgba(59,130,246,0.15)',color:'var(--accent-lt)' }}>📍{m.area}</span>
+                  </label>
+                ))}
+              </div>
+              {selectedCs.length > 0 && (
+                <div style={{ fontSize:'0.75rem',color:'var(--accent-lt)',marginTop:6 }}>
+                  選択中：{selectedCs.join('、')} （{selectedCs.length}/2名）
+                </div>
+              )}
+            </div>
+
+            {/* 希望日数より少ない場合は理由入力必須 */}
+            {cands.length < maxDays && (
+              <div className="form-group">
+                <label style={{ color:'var(--warning)' }}>
+                  ⚠️ 不足理由（必須）
+                  <span style={{ fontWeight:400,fontSize:'0.75rem',marginLeft:6 }}>
+                    希望{maxDays}日に対して候補日が{cands.length}件のみで確定します
+                  </span>
+                </label>
+                <textarea
+                  value={shortageReason}
+                  onChange={e => setShortageReason(e.target.value)}
+                  placeholder="希望日数を満たせなかった理由を入力してください"
+                  style={{ minHeight:70 }}
+                />
+              </div>
+            )}
+
+            <div style={{ display:'flex',gap:8 }}>
+              <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => setShowConfirmModal(false)}>キャンセル</button>
+              <button className="btn btn-success" style={{ flex:1 }} onClick={handleConfirmSchedule} disabled={busy}>
+                {busy ? '確定中...' : '確定する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* キャンセルモーダル */}
       {showCancelModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 300,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: 'var(--navy-mid)', border: '1px solid var(--border)',
-            borderRadius: 16, padding: 24, width: '100%', maxWidth: 380 }}>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 8, color: 'var(--danger)' }}>
-              ⚠️ キャンセル確認
-            </div>
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-sub)', marginBottom: 16, lineHeight: 1.6 }}>
-              キャンセルすると元に戻せません。<br />
-              再スケジュールが必要な場合は新規案件として再申請してください。
+        <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
+          <div style={{ background:'var(--navy-mid)',border:'1px solid var(--border)',borderRadius:16,padding:24,width:'100%',maxWidth:380 }}>
+            <div style={{ fontWeight:700,fontSize:'1.1rem',marginBottom:8,color:'var(--danger)' }}>⚠️ キャンセル確認</div>
+            <div style={{ fontSize:'0.82rem',color:'var(--text-sub)',marginBottom:16,lineHeight:1.6 }}>
+              キャンセルすると元に戻せません。<br />再スケジュールが必要な場合は新規案件として再申請してください。
             </div>
             <div className="form-group">
               <label>キャンセル理由 *</label>
-              <textarea
-                value={cancelReason}
-                onChange={e => setCancelReason(e.target.value)}
-                placeholder="キャンセルの理由を入力してください"
-                style={{ minHeight: 80 }}
-                autoFocus
-              />
+              <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)}
+                placeholder="キャンセルの理由を入力してください" style={{ minHeight:80 }} autoFocus />
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setShowCancelModal(false); setCancelReason(''); }}>
-                戻る
-              </button>
-              <button className="btn btn-danger" style={{ flex: 1 }} onClick={handleCancel}
-                disabled={busy || !cancelReason.trim()}>
+            <div style={{ display:'flex',gap:8 }}>
+              <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => { setShowCancelModal(false); setCancelReason(''); }}>戻る</button>
+              <button className="btn btn-danger" style={{ flex:1 }} onClick={handleCancel} disabled={busy||!cancelReason.trim()}>
                 {busy ? '処理中...' : 'キャンセルする'}
               </button>
             </div>
@@ -228,64 +305,62 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+      {/* ヘッダー */}
+      <div style={{ display:'flex',alignItems:'center',gap:12,marginBottom:20 }}>
         <button className="btn btn-ghost btn-sm" onClick={onBack}>← 戻る</button>
         <StatusBadge status={project.status} />
       </div>
-
       <div className="page-title">{project.project_type || '—'}</div>
       <div className="page-sub">{project.client_name}</div>
 
-      {/* 確定日バナー */}
+      {/* 確定バナー */}
       {isConfirmed && project.confirmed_date && (
         <div className="confirmed-banner">
-          <span style={{ fontSize: '1.2rem' }}>✅</span>
+          <span style={{ fontSize:'1.2rem' }}>✅</span>
           <div>
-            <div style={{ fontSize: '0.72rem', color: 'var(--success)', marginBottom: 2 }}>確定日</div>
+            <div style={{ fontSize:'0.72rem',color:'var(--success)',marginBottom:2 }}>確定日</div>
             <div className="date-text">{formatDateTime(project.confirmed_date)}</div>
+            {(project.cs_members||[]).length > 0 && (
+              <div style={{ fontSize:'0.75rem',color:'var(--success)',marginTop:2 }}>CS担当：{project.cs_members.join('、')}</div>
+            )}
           </div>
         </div>
       )}
 
       {/* キャンセルバナー */}
       {isCancelled && (
-        <div style={{ padding: '12px 14px', borderRadius: 10, marginBottom: 16,
-          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
-          <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginBottom: 4 }}>キャンセル済み</div>
-          <div style={{ fontSize: '0.88rem', color: 'var(--text)' }}>
-            理由：{project.cancel_reason || '—'}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-sub)', marginTop: 6 }}>
-            再スケジュールが必要な場合は新規案件として再申請してください
-          </div>
+        <div style={{ padding:'12px 14px',borderRadius:10,marginBottom:16,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)' }}>
+          <div style={{ fontSize:'0.72rem',color:'var(--danger)',marginBottom:4 }}>キャンセル済み</div>
+          <div style={{ fontSize:'0.88rem' }}>理由：{project.cancel_reason || '—'}</div>
+          <div style={{ fontSize:'0.75rem',color:'var(--text-sub)',marginTop:6 }}>再スケジュールが必要な場合は新規案件として再申請してください</div>
         </div>
       )}
 
       {/* メタ情報 */}
       <div className="detail-meta">
-        <div className="meta-item">
-          <div className="meta-label">担当営業</div>
-          <div className="meta-value">{project.sales_rep}</div>
-        </div>
-        <div className="meta-item">
-          <div className="meta-label">納品方法</div>
-          <div className="meta-value">{DELIVERY_LABELS[project.delivery_method] || '—'}</div>
-        </div>
-        <div className="meta-item">
-          <div className="meta-label">ステータス</div>
-          <div className="meta-value">{STATUS_MAP[project.status]?.label ?? project.status}</div>
-        </div>
-        <div className="meta-item">
-          <div className="meta-label">希望候補日数</div>
-          <div className="meta-value">{project.candidate_days || 1}日</div>
-        </div>
+        <div className="meta-item"><div className="meta-label">担当営業</div><div className="meta-value">{project.sales_rep}</div></div>
+        <div className="meta-item"><div className="meta-label">納品方法</div><div className="meta-value">{DELIVERY_LABELS[project.delivery_method]||'—'}</div></div>
+        <div className="meta-item"><div className="meta-label">ステータス</div><div className="meta-value">{STATUS_MAP[project.status]?.label??project.status}</div></div>
+        <div className="meta-item"><div className="meta-label">希望候補日数</div><div className="meta-value">{maxDays}日</div></div>
+        {(project.cs_members||[]).length > 0 && (
+          <div className="meta-item" style={{ gridColumn:'1/-1' }}>
+            <div className="meta-label">CS担当者</div>
+            <div className="meta-value">{project.cs_members.join('、')}</div>
+          </div>
+        )}
+        {project.shortage_reason && (
+          <div className="meta-item" style={{ gridColumn:'1/-1' }}>
+            <div className="meta-label">不足理由</div>
+            <div className="meta-value" style={{ color:'var(--warning)' }}>{project.shortage_reason}</div>
+          </div>
+        )}
         {project.confirmed_date && (
-          <div className="meta-item" style={{ gridColumn: '1 / -1' }}>
+          <div className="meta-item" style={{ gridColumn:'1/-1' }}>
             <div className="meta-label">確定日時</div>
             <div className="meta-value">{formatDateTime(project.confirmed_date)}</div>
           </div>
         )}
-        <div className="meta-item" style={{ gridColumn: '1 / -1' }}>
+        <div className="meta-item" style={{ gridColumn:'1/-1' }}>
           <div className="meta-label">最終更新</div>
           <div className="meta-value">{formatDateTime(project.updated_at)}</div>
         </div>
@@ -294,18 +369,16 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       {project.memo && (
         <div className="card">
           <div className="section-title">備考</div>
-          <div style={{ fontSize: '0.9rem', lineHeight: 1.6 }}>{project.memo}</div>
+          <div style={{ fontSize:'0.9rem',lineHeight:1.6 }}>{project.memo}</div>
         </div>
       )}
 
       {/* 候補日セクション */}
       {!isCancelled && (
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <div className="section-title" style={{ marginBottom: 0 }}>
-              {isConfirmed ? '確定スケジュール' : '候補日'}
-            </div>
-            {canEditCandidates && !isConfirmed && (project.candidates?.length || 0) < (project.candidate_days || 1) && (
+          <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12 }}>
+            <div className="section-title" style={{ marginBottom:0 }}>{isConfirmed ? '確定スケジュール' : '候補日'}</div>
+            {canEditCandidates && cands.length < maxDays && (
               <button className="btn btn-ghost btn-sm" onClick={() => setShowAddForm(v => !v)}>
                 {showAddForm ? '閉じる' : '+ 追加'}
               </button>
@@ -313,132 +386,116 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
           </div>
 
           {/* 候補日追加フォーム */}
-          {showAddForm && !isConfirmed && (
-            <form onSubmit={handleAddCandidate} style={{ marginBottom: 12, padding: 12,
-              background: 'rgba(59,130,246,0.06)', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)' }}>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', marginBottom: 8 }}>
-                第{(project.candidates?.length || 0) + 1}候補を追加（希望候補日数：{project.candidate_days || 1}日）
+          {showAddForm && canEditCandidates && (
+            <form onSubmit={handleAddCandidate} style={{ marginBottom:12,padding:12,background:'rgba(59,130,246,0.06)',borderRadius:8,border:'1px solid rgba(59,130,246,0.2)' }}>
+              <div style={{ fontSize:'0.78rem',color:'var(--text-sub)',marginBottom:8 }}>
+                第{cands.length+1}候補を追加（希望候補日数：{maxDays}日）
               </div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                <input type="date" style={{ flex: 1 }} value={newCandidate.date}
-                  onChange={e => { setNewCandidate(c => ({ ...c, date: e.target.value })); checkConflict(e.target.value, newCandidate.time); }}
-                  required />
-                <input type="time" style={{ width: 110, flexShrink: 0 }} value={newCandidate.time}
+              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:6 }}>
+                <div>
+                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>開始日 *</div>
+                  <input type="date" value={newCandidate.date}
+                    onChange={e => { setNewCandidate(c => ({ ...c, date: e.target.value })); checkConflict(e.target.value, newCandidate.time); }} required />
+                </div>
+                <div>
+                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>終了日（期間指定の場合）</div>
+                  <input type="date" value={newCandidate.date_to}
+                    onChange={e => setNewCandidate(c => ({ ...c, date_to: e.target.value }))}
+                    min={newCandidate.date} />
+                </div>
+              </div>
+              <div style={{ marginBottom:8 }}>
+                <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>開始時刻（任意）</div>
+                <input type="time" style={{ width:130 }} value={newCandidate.time}
                   onChange={e => { setNewCandidate(c => ({ ...c, time: e.target.value })); checkConflict(newCandidate.date, e.target.value); }} />
               </div>
               {conflicts && (
                 conflicts.blocked ? (
-                  <div style={{ fontSize: '0.78rem', color: 'var(--danger)', marginBottom: 8 }}>
+                  <div style={{ fontSize:'0.78rem',color:'var(--danger)',marginBottom:8 }}>
                     🚫 管理者により予定不可{conflicts.blockedInfo?.reason ? `（${conflicts.blockedInfo.reason}）` : ''}
                   </div>
                 ) : conflicts.sales_reps?.length >= 2 ? (
-                  <div style={{ fontSize: '0.78rem', color: 'var(--danger)', marginBottom: 8 }}>
+                  <div style={{ fontSize:'0.78rem',color:'var(--danger)',marginBottom:8 }}>
                     ⛔ {conflicts.sales_reps.join('さんと ')}さんが抑えているため登録不可
                   </div>
                 ) : conflicts.sales_reps?.length === 1 ? (
-                  <div style={{ fontSize: '0.78rem', color: 'var(--warning)', marginBottom: 8 }}>
+                  <div style={{ fontSize:'0.78rem',color:'var(--warning)',marginBottom:8 }}>
                     ⚠️ {conflicts.sales_reps[0]}さんが仮抑え中（登録は可能）
                   </div>
                 ) : null
               )}
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" className="btn btn-ghost btn-sm"
-                  onClick={() => { setShowAddForm(false); setConflicts(null); }}>キャンセル</button>
+              <div style={{ display:'flex',gap:8 }}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setShowAddForm(false); setConflicts(null); }}>キャンセル</button>
                 <button type="submit" className="btn btn-primary btn-sm"
                   disabled={busy || conflicts?.blocked || conflicts?.sales_reps?.length >= 2}>追加する</button>
               </div>
             </form>
           )}
 
-          {/* 確定済みの日付表示 */}
+          {/* 確定済み表示 */}
           {isConfirmed && project.confirmed_date && (
-            <div style={{ padding: '12px 14px', borderRadius: 8,
-              background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
-              <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--success)' }}>
-                {formatDateTime(project.confirmed_date)}
-              </div>
+            <div style={{ padding:'12px 14px',borderRadius:8,background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.25)' }}>
+              <div style={{ fontSize:'1rem',fontWeight:600,color:'var(--success)' }}>{formatDateTime(project.confirmed_date)}</div>
             </div>
           )}
 
           {/* 候補日一覧 */}
-          {!isConfirmed && (!project.candidates || project.candidates.length === 0) && (
-            <div style={{ color: 'var(--text-sub)', fontSize: '0.85rem' }}>
+          {!isConfirmed && cands.length === 0 && (
+            <div style={{ color:'var(--text-sub)',fontSize:'0.85rem' }}>
               {isPending ? '🗓 管理者が候補日を設定します（営業からの設定はできません）' : '候補日がありません'}
             </div>
           )}
-          {!isConfirmed && project.candidates?.map(c => (
+          {!isConfirmed && cands.map(c => (
             <div key={c.id} className="confirm-card">
               <div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-sub)', marginBottom: 2 }}>{c.label}</div>
-                <div className="confirm-date">
-                  {formatDate(c.candidate_date)}{c.candidate_time && ` ${c.candidate_time}`}
-                </div>
+                <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:2 }}>{c.label}</div>
+                <div className="confirm-date">{formatCandDate(c)}</div>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {/* 確定ボタン：営業担当または管理者 */}
+              <div style={{ display:'flex',gap:8 }}>
                 {canConfirm && (
-                  <button className="btn btn-success btn-sm" onClick={() => handleConfirmSchedule(c)} disabled={busy}>
-                    確定
-                  </button>
+                  <button className="btn btn-success btn-sm" onClick={() => openConfirmModal(c)} disabled={busy}>確定</button>
                 )}
                 {canEditCandidates && (
-                  <button className="btn btn-ghost btn-sm"
-                    onClick={() => handleDeleteCandidate(c.id)} disabled={busy}
-                    style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)' }}>
-                    削除
-                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => handleDeleteCandidate(c.id)} disabled={busy}
+                    style={{ color:'var(--danger)',borderColor:'rgba(239,68,68,0.3)' }}>削除</button>
                 )}
               </div>
             </div>
           ))}
 
-          {/* 候補日の進捗表示と設定完了ボタン（管理者・候補日待ち〜仮スケ設定中） */}
+          {/* 進捗表示と設定完了ボタン（管理者・pending/scheduled中） */}
           {!isConfirmed && isAdmin && (isPending || isScheduled) && (
-            <div style={{ marginTop: 12 }}>
-              {(() => {
-                const maxDays = project.candidate_days || 1;
-                const currentCount = project.candidates?.length || 0;
-                const isExact = currentCount === maxDays;
-                const isOver = currentCount > maxDays;
-                const isUnder = currentCount < maxDays;
-                return (
-                  <>
-                    <div style={{
-                      padding: '8px 12px', borderRadius: 8, marginBottom: 10, fontSize: '0.8rem',
-                      background: isExact ? 'rgba(16,185,129,0.08)' : isOver ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
-                      border: `1px solid ${isExact ? 'rgba(16,185,129,0.25)' : isOver ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`,
-                      color: isExact ? 'var(--success)' : isOver ? 'var(--danger)' : 'var(--warning)',
-                    }}>
-                      {isExact && `✅ 候補日 ${currentCount}/${maxDays} 件 — 希望日数ちょうどです`}
-                      {isOver && `⚠️ 候補日 ${currentCount}/${maxDays} 件 — 希望日数を超えています。${currentCount - maxDays}件削除してください`}
-                      {isUnder && `🗓 候補日 ${currentCount}/${maxDays} 件 — あと${maxDays - currentCount}件追加してください`}
-                    </div>
-                    <button className="btn btn-success btn-full" onClick={handleFinalizeCandidates} disabled={busy || currentCount === 0}>
-                      候補日の設定完了（通知メールを送信）
-                    </button>
-                  </>
-                );
-              })()}
+            <div style={{ marginTop:12 }}>
+              <div style={{
+                padding:'8px 12px',borderRadius:8,marginBottom:10,fontSize:'0.8rem',
+                background: candidatesReady ? 'rgba(16,185,129,0.08)' : candidatesOver ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
+                border: `1px solid ${candidatesReady ? 'rgba(16,185,129,0.25)' : candidatesOver ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`,
+                color: candidatesReady ? 'var(--success)' : candidatesOver ? 'var(--danger)' : 'var(--warning)',
+              }}>
+                {candidatesReady && `✅ 候補日 ${cands.length}/${maxDays} 件 — 希望日数ちょうどです`}
+                {candidatesOver && `⚠️ 候補日 ${cands.length}/${maxDays} 件 — 希望日数を超えています。${cands.length - maxDays}件削除してください`}
+                {candidatesShort && `🗓 候補日 ${cands.length}/${maxDays} 件 — あと${maxDays - cands.length}件追加してください`}
+              </div>
+              <button className="btn btn-success btn-full" onClick={handleFinalizeCandidates}
+                disabled={busy || cands.length === 0}>
+                候補日の設定完了（通知メールを送信）
+              </button>
             </div>
           )}
         </div>
       )}
 
       {/* アクションボタン */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-
-        {/* リマインドボタン：候補日待ちのとき */}
+      <div style={{ display:'flex',flexDirection:'column',gap:10,marginTop:8 }}>
         {canRemind && (
           <button className="btn btn-ghost btn-full" onClick={handleRemind} disabled={busy}
-            style={{ borderColor: 'var(--warning)', color: 'var(--warning)' }}>
+            style={{ borderColor:'var(--warning)',color:'var(--warning)' }}>
             🔔 リマインドを送信（CS部管理者・自身へメール）
           </button>
         )}
-
-        {/* キャンセルボタン */}
         {canCancel && !isCancelled && (
           <button className="btn btn-ghost btn-sm" onClick={() => setShowCancelModal(true)} disabled={busy}
-            style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)', alignSelf: 'flex-start' }}>
+            style={{ color:'var(--danger)',borderColor:'rgba(239,68,68,0.3)',alignSelf:'flex-start' }}>
             この案件をキャンセル
           </button>
         )}
@@ -446,13 +503,12 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
 
       {/* 管理者専用：ステータス変更 */}
       {isAdmin && !isCancelled && (
-        <div className="card" style={{ marginTop: 12 }}>
+        <div className="card" style={{ marginTop:12 }}>
           <div className="section-title">管理者：ステータス変更</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}>
             {Object.entries(STATUS_MAP).map(([key, { label }]) =>
               key !== project.status && key !== 'cancelled' && (
-                <button key={key} className="btn btn-ghost btn-sm"
-                  onClick={() => handleStatusChange(key)} disabled={busy}>
+                <button key={key} className="btn btn-ghost btn-sm" onClick={() => handleStatusChange(key)} disabled={busy}>
                   {label}へ変更
                 </button>
               )
@@ -461,9 +517,8 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
         </div>
       )}
 
-      {/* 管理者：削除 */}
       {isAdmin && (
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop:8 }}>
           <button className="btn btn-danger btn-sm" onClick={handleDelete}>案件を削除</button>
         </div>
       )}

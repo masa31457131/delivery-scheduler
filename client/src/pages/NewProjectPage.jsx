@@ -22,7 +22,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const handleMemo = (v) => {
-    if (v.length <= 30) setField('memo', v);
+    if (v.length <= 50) setField('memo', v);
   };
 
   const handleSubmit = async (e) => {
@@ -123,16 +123,16 @@ export default function NewProjectPage({ onSaved, addToast }) {
               <label style={{ margin: 0 }}>備考</label>
               <span style={{
                 fontSize: '0.75rem', fontWeight: 600,
-                color: memoLen >= 25 ? (memoLen >= 30 ? 'var(--danger)' : 'var(--warning)') : 'var(--text-sub)',
+                color: memoLen >= 40 ? (memoLen >= 50 ? 'var(--danger)' : 'var(--warning)') : 'var(--text-sub)',
               }}>
-                {memoLen} / 30文字
+                {memoLen} / 50文字
               </span>
             </div>
             <input
               value={form.memo}
               onChange={e => handleMemo(e.target.value)}
-              placeholder="簡潔に記載（30文字以内）"
-              maxLength={30}
+              placeholder="簡潔に記載（50文字以内）"
+              maxLength={50}
             />
           </div>
         </div>

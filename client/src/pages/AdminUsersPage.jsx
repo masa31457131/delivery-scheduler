@@ -8,7 +8,8 @@ export default function AdminUsersPage({ addToast }) {
       <div className="page-title">管理者設定</div>
       <div className="filter-bar" style={{ marginBottom: 20 }}>
         {[
-          { key: 'users',     label: '👤 メンバー' },
+          { key: 'users',     label: '👤 営業メンバー' },
+          { key: 'cs',        label: '🛠 CS部員' },
           { key: 'admins',    label: '🔑 管理者' },
           { key: 'blocked',   label: '🚫 予定不可日' },
           { key: 'email',     label: '📧 メール設定' },
@@ -20,6 +21,7 @@ export default function AdminUsersPage({ addToast }) {
         ))}
       </div>
       {tab === 'users'     && <UsersTab addToast={addToast} />}
+      {tab === 'cs'        && <CsMembersTab addToast={addToast} />}
       {tab === 'admins'    && <AdminsTab addToast={addToast} />}
       {tab === 'blocked'   && <BlockedTab addToast={addToast} />}
       {tab === 'email'     && <EmailTab addToast={addToast} />}
@@ -162,6 +164,140 @@ function UsersTab({ addToast }) {
 }
 
 // ── 予定不可日管理 ────────────────────────────────────────────
+// ── CS部員管理 ─────────────────────────────────────────────────
+function CsMembersTab({ addToast }) {
+  const [members, setMembers] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [form, setForm] = useState({ display_name: '', login_id: '', password: '', email: '', area: '東京' });
+  const [loading, setLoading] = useState(false);
+
+  const load = () => api.getCsMembers().then(setMembers);
+  useEffect(() => { load(); }, []);
+
+  const openAdd = () => { setEditTarget(null); setForm({ display_name: '', login_id: '', password: '', email: '', area: '東京' }); setShowForm(true); };
+  const openEdit = (m) => { setEditTarget(m); setForm({ display_name: m.display_name, login_id: m.login_id, password: '', email: m.email || '', area: m.area || '東京' }); setShowForm(true); };
+  const closeForm = () => { setShowForm(false); setEditTarget(null); };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      if (editTarget) {
+        const payload = { display_name: form.display_name, login_id: form.login_id, email: form.email, area: form.area };
+        if (form.password) payload.password = form.password;
+        await api.updateCsMember(editTarget.id, payload);
+        addToast('CS部員情報を更新しました');
+      } else {
+        await api.createCsMember(form);
+        addToast('CS部員を追加しました');
+      }
+      await load(); closeForm();
+    } catch (err) { addToast(err.message, 'error'); }
+    finally { setLoading(false); }
+  };
+
+  const handleDelete = async (m) => {
+    if (!confirm(`CS部員「${m.display_name}」を削除しますか？`)) return;
+    try { await api.deleteCsMember(m.id); addToast('削除しました'); await load(); }
+    catch (err) { addToast(err.message, 'error'); }
+  };
+
+  return (
+    <>
+      <div style={{ padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)', borderRadius: 8, marginBottom: 16, fontSize: '0.78rem', color: 'var(--text-sub)', lineHeight: 1.6 }}>
+        仮スケジュール確定時にCS部員を最大2名選択できます。東西エリア問わず選択可能です。
+      </div>
+
+      <button className="btn btn-primary btn-sm" style={{ marginBottom: 16 }} onClick={openAdd}>+ CS部員を追加</button>
+
+      {showForm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: 'var(--navy-mid)', border: '1px solid var(--border)',
+            borderRadius: 16, padding: 24, width: '100%', maxWidth: 380 }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>
+              {editTarget ? 'CS部員を編集' : 'CS部員を追加'}
+            </div>
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label>表示名 *</label>
+                <input value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))}
+                  placeholder="田中 CS一郎" required />
+              </div>
+              <div className="form-group">
+                <label>ログインID *</label>
+                <input value={form.login_id} onChange={e => setForm(f => ({ ...f, login_id: e.target.value }))}
+                  placeholder="cs_tanaka" required style={{ fontFamily: 'monospace' }} />
+              </div>
+              <div className="form-group">
+                <label>{editTarget ? '新しいパスワード（変更する場合のみ）' : 'パスワード *'}</label>
+                <input type="password" value={form.password}
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder={editTarget ? '変更しない場合は空白' : 'パスワードを入力'}
+                  required={!editTarget} />
+              </div>
+              <div className="form-group">
+                <label>メールアドレス（仮スケ確定時に通知）</label>
+                <input type="email" value={form.email}
+                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="cs_tanaka@example.com" />
+              </div>
+              <div className="form-group">
+                <label>エリア *</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['東京', '大阪'].map(a => (
+                    <label key={a} style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      cursor: 'pointer', padding: '10px 12px', borderRadius: 8,
+                      background: form.area === a ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
+                      border: `1px solid ${form.area === a ? 'var(--accent)' : 'var(--border)'}`,
+                    }}>
+                      <input type="radio" name="cs_area" value={a} checked={form.area === a}
+                        onChange={() => setForm(f => ({ ...f, area: a }))} style={{ width: 'auto', margin: 0 }} />
+                      <span style={{ fontSize: '0.88rem' }}>📍 {a}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={closeForm}>キャンセル</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={loading}>
+                  {loading ? '保存中...' : editTarget ? '更新' : '追加'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {members.length === 0 ? (
+        <div className="empty-state" style={{ padding: '32px 16px' }}>CS部員が登録されていません</div>
+      ) : members.map(m => (
+        <div key={m.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--purple, #7C3AED)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0, color: '#fff' }}>
+            🛠
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontWeight: 600 }}>{m.display_name}</span>
+              <span style={{ fontSize: '0.68rem', padding: '1px 7px', borderRadius: 99, background: 'rgba(59,130,246,0.15)', color: 'var(--accent-lt)' }}>
+                📍 {m.area || '東京'}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-sub)', fontFamily: 'monospace' }}>ID: {m.login_id}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-sub)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {m.email ? `📧 ${m.email}` : '📧 未設定'}
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={() => openEdit(m)}>編集</button>
+          <button className="btn btn-danger btn-sm" onClick={() => handleDelete(m)}>削除</button>
+        </div>
+      ))}
+    </>
+  );
+}
+
 // ── 管理者管理（複数管理者・エリア設定）────────────────────────
 function AdminsTab({ addToast }) {
   const [admins, setAdmins] = useState([]);
@@ -532,8 +668,8 @@ const TEMPLATE_LABELS = {
 };
 const AVAILABLE_VARS = {
   schedule_proposed:   ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'candidate_days', 'memo'],
-  candidates_set:      ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'candidate_list'],
-  schedule_confirmed:  ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'confirmed_date'],
+  candidates_set:      ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'cs_members', 'candidate_list'],
+  schedule_confirmed:  ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'cs_members', 'confirmed_date', 'shortage_reason_line'],
   schedule_cancelled:  ['project_type', 'client_name', 'sales_rep', 'confirmed_date', 'cancel_reason'],
   reminder:            ['project_type', 'client_name', 'sales_rep', 'candidate_days', 'created_at'],
   auto_cancel_warning: ['project_type', 'client_name', 'sales_rep', 'deadline_date'],
