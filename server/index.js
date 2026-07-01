@@ -254,7 +254,8 @@ async function initDB() {
         candidate_date    TEXT NOT NULL,
         candidate_date_to TEXT DEFAULT '',
         candidate_time    TEXT DEFAULT '',
-        label             TEXT
+        label             TEXT,
+        cs_members        TEXT DEFAULT '[]'
       );
       CREATE TABLE IF NOT EXISTS blocked_dates (
         id         TEXT PRIMARY KEY,
@@ -289,6 +290,7 @@ async function initDB() {
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS area TEXT DEFAULT '東京'`);
     await client.query(`ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS area TEXT NOT NULL DEFAULT '東京'`);
     await client.query(`ALTER TABLE schedule_candidates ADD COLUMN IF NOT EXISTS candidate_date_to TEXT DEFAULT ''`);
+    await client.query(`ALTER TABLE schedule_candidates ADD COLUMN IF NOT EXISTS cs_members TEXT DEFAULT '[]'`);
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
     if (parseInt(rows[0].c) === 0) {
@@ -544,13 +546,13 @@ app.get('/api/projects', async (_req, res) => {
   const { rows: candidates } = await pool.query('SELECT * FROM schedule_candidates ORDER BY candidate_date');
   const candMap = {};
   candidates.forEach(c => { if (!candMap[c.project_id]) candMap[c.project_id] = []; candMap[c.project_id].push(c); });
-  res.json(projects.map(p => ({ ...parseProject(p), candidates: candMap[p.id] || [] })));
+  res.json(projects.map(p => ({ ...parseProject(p), candidates: (candMap[p.id] || []).map(c => ({ ...c, cs_members: JSON.parse(c.cs_members || '[]') })) })));
 });
 app.get('/api/projects/:id', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
   const { rows: candidates } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
-  res.json({ ...parseProject(rows[0]), candidates });
+  res.json({ ...parseProject(rows[0]), candidates: candidates.map(c => ({ ...c, cs_members: JSON.parse(c.cs_members || '[]') })) });
 });
 
 // 新規登録
@@ -606,7 +608,7 @@ app.put('/api/projects/:id', async (req, res) => {
 
 // 候補日 追加（希望日数上限チェック・ステータスはfinalizeまでpending維持）
 app.post('/api/projects/:id/candidates', async (req, res) => {
-  const { date, date_to, time } = req.body;
+  const { date, date_to, time, cs_members } = req.body;
   if (!date) return res.status(400).json({ error: '日付は必須です' });
   const { rows: existing } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!existing[0]) return res.status(404).json({ error: '案件が見つかりません' });
@@ -615,12 +617,15 @@ app.post('/api/projects/:id/candidates', async (req, res) => {
   if (cands.length >= maxDays) {
     return res.status(400).json({ error: `希望候補日数は${maxDays}日です。${maxDays}件を超えて登録できません。` });
   }
-  await pool.query('INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_date_to,candidate_time,label) VALUES ($1,$2,$3,$4,$5,$6)',
-    [uuidv4(), req.params.id, date, date_to || '', time || '', `第${cands.length+1}候補`]);
+  const csMembersJson = JSON.stringify(cs_members || []);
+  await pool.query(
+    'INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_date_to,candidate_time,label,cs_members) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+    [uuidv4(), req.params.id, date, date_to || '', time || '', `第${cands.length+1}候補`, csMembersJson]
+  );
   // ステータスはfinalizeまでpendingのまま維持（scheduledには変更しない）
   await pool.query('UPDATE projects SET updated_at=NOW() WHERE id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
-  res.status(201).json(updated);
+  res.status(201).json(updated.map(r => ({ ...r, cs_members: JSON.parse(r.cs_members || '[]') })));
 });
 
 // 候補日 削除
@@ -634,7 +639,7 @@ app.delete('/api/projects/:id/candidates/:candidateId', async (req, res) => {
   }
   await pool.query('UPDATE projects SET updated_at=NOW() WHERE id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
-  res.json(updated);
+  res.json(updated.map(r => ({ ...r, cs_members: JSON.parse(r.cs_members || '[]') })));
 });
 
 // 候補日の設定完了（通知メール送信・ステータスをscheduledに変更）
@@ -651,22 +656,29 @@ app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
   await pool.query("UPDATE projects SET status='scheduled', updated_at=NOW() WHERE id=$1", [req.params.id]);
   const { rows: updatedProject } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
 
-  const allTo = await buildRecipients(p.sales_rep, p.cs_members);
+  // 全候補日の CS 部員を合算（重複除去）
+  const allCsNames = [...new Set(cands.flatMap(c => {
+    try { return JSON.parse(c.cs_members || '[]'); } catch { return []; }
+  }))];
+  const allTo = await buildRecipients(p.sales_rep, allCsNames);
   if (allTo.length) {
     const dateLines = cands.map(c => {
+      const candCs = (() => { try { return JSON.parse(c.cs_members || '[]'); } catch { return []; } })();
       let s = `${c.label}：${c.candidate_date}`;
       if (c.candidate_date_to) s += `〜${c.candidate_date_to}`;
       if (c.candidate_time) s += ` ${c.candidate_time}`;
+      if (candCs.length) s += ` （CS担当：${candCs.join('、')}）`;
       return s;
     }).join('\n');
+    const csDisplay = allCsNames.length ? allCsNames.join('、') : 'なし';
     await sendTemplatedEmail('candidates_set', allTo, {
       project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
       delivery_method: DELIVERY_LABEL(p.delivery_method),
-      cs_members: p.cs_members.length ? p.cs_members.join('、') : 'なし',
+      cs_members: csDisplay,
       candidate_list: dateLines,
     });
   }
-  res.json({ ...parseProject(updatedProject[0]), candidates: cands });
+  res.json({ ...parseProject(updatedProject[0]), candidates: cands.map(c => ({ ...c, cs_members: JSON.parse(c.cs_members || '[]') })) });
 });
 
 // 仮スケジュールを確定（CS部員選択・不足理由）
