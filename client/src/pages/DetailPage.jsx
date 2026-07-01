@@ -50,7 +50,26 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     return u?.area || '東京';
   })();
 
-  // 確定モーダルを開く
+  // 営業用：CS選択なしで直接確定
+  const handleConfirmDirect = async (candidate) => {
+    const dateStr = formatCandDate(candidate);
+    if (!confirm(`「${dateStr}」でスケジュールを確定しますか？`)) return;
+    setBusy(true);
+    try {
+      const updated = await api.confirmSchedule(projectId, {
+        confirmed_date: candidate.candidate_date,
+        confirmed_time: candidate.candidate_time,
+        cs_members: project.cs_members || [],   // 管理者が設定済みのCS部員を引き継ぐ
+        shortage_reason: project.shortage_reason || '',
+      });
+      setProject(updated);
+      addToast('スケジュールを確定しました！');
+      onRefresh();
+    } catch (err) { addToast(err.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  // 管理者用：CS選択モーダルを開く
   const openConfirmModal = (candidate) => {
     setConfirmTarget(candidate);
     setSelectedCs(project.cs_members || []);
@@ -166,12 +185,15 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const doFinalize = async (reason) => {
     setBusy(true);
     try {
-      // サーバー側に shortage_reason を渡すため updateProject で先に保存してから finalize
-      if (reason) {
-        await api.updateProject(projectId, { shortage_reason: reason });
+      // shortage_reason と cs_members を一緒に保存してから finalize
+      const patch = {};
+      if (reason) patch.shortage_reason = reason;
+      if (selectedCs.length > 0) patch.cs_members = selectedCs;
+      if (Object.keys(patch).length > 0) {
+        await api.updateProject(projectId, patch);
       }
       const updated = await api.finalizeCandidates(projectId);
-      setProject({ ...updated, shortage_reason: reason || updated.shortage_reason });
+      setProject({ ...updated, shortage_reason: reason || updated.shortage_reason, cs_members: selectedCs.length ? selectedCs : updated.cs_members });
       setShowFinalizeModal(false);
       setShortageReason('');
       addToast('候補日の設定が完了し、通知メールを送信しました');
@@ -231,43 +253,28 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
 
   return (
     <>
-      {/* 確定モーダル */}
+      {/* 確定モーダル（管理者用・CS部員は設定完了時に選択済み） */}
       {showConfirmModal && confirmTarget && (
         <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
-          <div style={{ background:'var(--navy-mid)',border:'1px solid var(--border)',borderRadius:16,padding:24,width:'100%',maxWidth:400,maxHeight:'90vh',overflowY:'auto' }}>
+          <div style={{ background:'var(--navy-mid)',border:'1px solid var(--border)',borderRadius:16,padding:24,width:'100%',maxWidth:400 }}>
             <div style={{ fontWeight:700,fontSize:'1.1rem',marginBottom:16 }}>📅 スケジュールを確定</div>
 
             <div style={{ padding:'10px 12px',background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.25)',borderRadius:8,marginBottom:16 }}>
               <div style={{ fontSize:'0.72rem',color:'var(--success)',marginBottom:2 }}>確定日</div>
-              <div style={{ fontWeight:600,color:'var(--success)' }}>
+              <div style={{ fontWeight:600,color:'var(--success)',fontSize:'1rem' }}>
                 {formatCandDate(confirmTarget)}
               </div>
             </div>
 
-            <div className="form-group">
-              <label>CS部員を選択（最大2名・東西問わず）</label>
-              <div style={{ display:'flex',flexDirection:'column',gap:6,marginTop:4 }}>
-                {csMembers.length === 0 ? (
-                  <div style={{ fontSize:'0.8rem',color:'var(--text-sub)' }}>CS部員が登録されていません（管理者設定で追加してください）</div>
-                ) : csMembers.map(m => (
-                  <label key={m.id} style={{
-                    display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:8,cursor:'pointer',
-                    background: selectedCs.includes(m.display_name) ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
-                    border:`1px solid ${selectedCs.includes(m.display_name) ? 'var(--accent)' : 'var(--border)'}`,
-                  }}>
-                    <input type="checkbox" checked={selectedCs.includes(m.display_name)}
-                      onChange={() => toggleCs(m.display_name)} style={{ width:'auto',margin:0 }} />
-                    <span style={{ flex:1,fontSize:'0.9rem' }}>{m.display_name}</span>
-                    <span style={{ fontSize:'0.72rem',padding:'1px 7px',borderRadius:99,background:'rgba(59,130,246,0.15)',color:'var(--accent-lt)' }}>📍{m.area}</span>
-                  </label>
+            {/* CS部員の確認表示（設定完了時に選択済み） */}
+            {(project.cs_members || []).length > 0 && (
+              <div style={{ padding:'8px 12px',background:'rgba(59,130,246,0.07)',border:'1px solid rgba(59,130,246,0.2)',borderRadius:8,marginBottom:16,fontSize:'0.82rem' }}>
+                <div style={{ fontSize:'0.7rem',color:'var(--text-sub)',marginBottom:4 }}>CS担当者（設定済み）</div>
+                {(project.cs_members || []).map(name => (
+                  <div key={name} style={{ color:'var(--accent-lt)' }}>✓ {name}</div>
                 ))}
               </div>
-              {selectedCs.length > 0 && (
-                <div style={{ fontSize:'0.75rem',color:'var(--accent-lt)',marginTop:6 }}>
-                  選択中：{selectedCs.join('、')} （{selectedCs.length}/2名）
-                </div>
-              )}
-            </div>
+            )}
 
             <div style={{ display:'flex',gap:8 }}>
               <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => setShowConfirmModal(false)}>キャンセル</button>
@@ -485,7 +492,9 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
               </div>
               <div style={{ display:'flex',gap:8 }}>
                 {canConfirm && (
-                  <button className="btn btn-success btn-sm" onClick={() => openConfirmModal(c)} disabled={busy}>確定</button>
+                  isAdmin
+                    ? <button className="btn btn-success btn-sm" onClick={() => openConfirmModal(c)} disabled={busy}>確定</button>
+                    : <button className="btn btn-success btn-sm" onClick={() => handleConfirmDirect(c)} disabled={busy}>確定</button>
                 )}
                 {canEditCandidates && (
                   <button className="btn btn-ghost btn-sm" onClick={() => handleDeleteCandidate(c.id)} disabled={busy}
@@ -495,11 +504,12 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
             </div>
           ))}
 
-          {/* 進捗表示と設定完了ボタン（管理者・pending/scheduled中） */}
+          {/* 進捗表示・CS部員選択・設定完了ボタン（管理者のみ） */}
           {!isConfirmed && isAdmin && (isPending || isScheduled) && (
             <div style={{ marginTop:12 }}>
+              {/* 進捗バー */}
               <div style={{
-                padding:'8px 12px',borderRadius:8,marginBottom:10,fontSize:'0.8rem',
+                padding:'8px 12px',borderRadius:8,marginBottom:12,fontSize:'0.8rem',
                 background: candidatesReady ? 'rgba(16,185,129,0.08)' : candidatesOver ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
                 border: `1px solid ${candidatesReady ? 'rgba(16,185,129,0.25)' : candidatesOver ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`,
                 color: candidatesReady ? 'var(--success)' : candidatesOver ? 'var(--danger)' : 'var(--warning)',
@@ -508,6 +518,41 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                 {candidatesOver && `⚠️ 候補日 ${cands.length}/${maxDays} 件 — 希望日数を超えています。${cands.length - maxDays}件削除してください`}
                 {candidatesShort && `🗓 候補日 ${cands.length}/${maxDays} 件 — あと${maxDays - cands.length}件追加してください`}
               </div>
+
+              {/* CS部員選択（管理者のみ・ここで設定する） */}
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:'0.78rem',fontWeight:700,color:'var(--text-sub)',letterSpacing:'0.05em',textTransform:'uppercase',marginBottom:8 }}>
+                  CS部員を選択（最大2名・東西問わず）
+                </div>
+                {csMembers.length === 0 ? (
+                  <div style={{ fontSize:'0.8rem',color:'var(--text-sub)' }}>
+                    CS部員が未登録です（管理者設定 → 🛠 CS部員 から追加してください）
+                  </div>
+                ) : (
+                  <div style={{ display:'flex',flexDirection:'column',gap:6 }}>
+                    {csMembers.map(m => (
+                      <label key={m.id} style={{
+                        display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:8,cursor:'pointer',
+                        background: selectedCs.includes(m.display_name) ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
+                        border:`1px solid ${selectedCs.includes(m.display_name) ? 'var(--accent)' : 'var(--border)'}`,
+                      }}>
+                        <input type="checkbox" checked={selectedCs.includes(m.display_name)}
+                          onChange={() => toggleCs(m.display_name)} style={{ width:'auto',margin:0 }} />
+                        <span style={{ flex:1,fontSize:'0.88rem' }}>{m.display_name}</span>
+                        <span style={{ fontSize:'0.68rem',padding:'1px 7px',borderRadius:99,background:'rgba(59,130,246,0.12)',color:'var(--accent-lt)' }}>
+                          📍{m.area}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {selectedCs.length > 0 && (
+                  <div style={{ fontSize:'0.75rem',color:'var(--accent-lt)',marginTop:6 }}>
+                    選択中：{selectedCs.join('、')}（{selectedCs.length}/2名）
+                  </div>
+                )}
+              </div>
+
               <button className="btn btn-success btn-full" onClick={handleFinalizeCandidates}
                 disabled={busy || cands.length === 0}>
                 候補日の設定完了（通知メールを送信）
