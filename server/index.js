@@ -10,23 +10,21 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL is not set.'); process.exit(1);
-}
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set.'); process.exit(1); }
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
-// ── Email settings ───────────────────────────────────────────
+// ── Email helpers ─────────────────────────────────────────────
 async function getEmailSettings() {
   const { rows } = await pool.query("SELECT value FROM settings WHERE key='email_settings'");
   if (!rows[0]) return { provider: 'gmail', from: '', notify_emails: [], gmail_user: '', gmail_app_password: '' };
   return JSON.parse(rows[0].value);
 }
 
-// ── Email templates（管理者が編集可能）────────────────────────
+// ── Email templates ───────────────────────────────────────────
 const DEFAULT_TEMPLATES = {
   schedule_proposed: {
     subject: '【新規依頼】{{project_type}}（{{client_name}}）',
@@ -49,6 +47,7 @@ const DEFAULT_TEMPLATES = {
 顧客名：{{client_name}}
 担当営業：{{sales_rep}}
 納品方法：{{delivery_method}}
+CS担当者：{{cs_members}}
 
 ▼候補日一覧
 {{candidate_list}}
@@ -62,8 +61,10 @@ const DEFAULT_TEMPLATES = {
 案件内容：{{project_type}}
 顧客名：{{client_name}}
 担当営業：{{sales_rep}}
+CS担当者：{{cs_members}}
 納品方法：{{delivery_method}}
 確定日時：{{confirmed_date}}
+{{shortage_reason_line}}
 
 日程が確定しました。準備をお願いします。`
   },
@@ -123,34 +124,31 @@ async function getEmailTemplates() {
 }
 
 function renderTemplate(str, vars) {
-  return str.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
+  return (str || '').replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
 }
 
 function textToHtml(title, bodyText) {
-  const bodyHtml = bodyText
-    .split('\n')
-    .map(line => line.trim() === '' ? '<br>' : `<div style="margin:2px 0">${line}</div>`)
-    .join('');
+  const bodyHtml = (bodyText || '').split('\n').map(l => l.trim() === '' ? '<br>' : `<div style="margin:2px 0">${l}</div>`).join('');
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f7fa;font-family:'Helvetica Neue',Arial,sans-serif">
   <div style="max-width:520px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
     <div style="background:#1a2332;padding:24px 28px">
       <div style="color:#3b82f6;font-size:11px;font-weight:700;letter-spacing:0.1em;margin-bottom:6px">納品スケジューラー</div>
       <div style="color:#fff;font-size:18px;font-weight:700">${title}</div>
     </div>
-    <div style="padding:24px 28px;font-size:14px;color:#333;line-height:1.8;white-space:pre-wrap">${bodyHtml}</div>
+    <div style="padding:24px 28px;font-size:14px;color:#333;line-height:1.8">${bodyHtml}</div>
   </div></body></html>`;
 }
 
 async function sendTemplatedEmail(templateKey, to, vars) {
   const templates = await getEmailTemplates();
   const tpl = templates[templateKey] || DEFAULT_TEMPLATES[templateKey];
+  if (!tpl) { console.log('[Email skipped - no template]', templateKey); return { skipped: true }; }
   const subject = renderTemplate(tpl.subject, vars);
   const bodyText = renderTemplate(tpl.body, vars);
   const html = textToHtml(subject, bodyText);
   return sendEmail({ to, subject, html });
 }
 
-// ── Email transport ───────────────────────────────────────────
 function createGmailTransport(user, pass) {
   return nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
 }
@@ -170,24 +168,40 @@ async function sendEmail({ to, subject, html }) {
   }
   if (provider === 'resend') {
     const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-    if (!resend) { console.log('[Resend skipped - no key]'); return { skipped: true }; }
+    if (!resend) { console.log('[Resend skipped]'); return { skipped: true }; }
     const from = settings.from || '納品スケジューラー <onboarding@resend.dev>';
-    try { const r = await resend.emails.send({ from, to: toList, subject, html }); return r; }
+    try { return await resend.emails.send({ from, to: toList, subject, html }); }
     catch (e) { console.error('[Resend error]', e.message); return { error: e.message }; }
   }
   return { skipped: true };
 }
 
-// 営業担当のメールアドレスを取得（login_idで検索）
-// 営業担当のメールアドレスを取得（display_nameで検索。projects.sales_repはdisplay_nameを保持）
+// 担当営業のメールアドレスを display_name で取得
 async function getSalesEmail(displayName) {
   const { rows } = await pool.query("SELECT email FROM users WHERE display_name=$1 AND role='sales'", [displayName]);
   return rows[0]?.email || null;
 }
-async function buildRecipients(salesDisplayName) {
+
+// CS部員のメールアドレスを取得（display_name の配列から）
+async function getCsEmails(csMemberNames) {
+  if (!csMemberNames || !csMemberNames.length) return [];
+  const { rows } = await pool.query(
+    "SELECT email FROM users WHERE display_name = ANY($1) AND email != ''",
+    [csMemberNames]
+  );
+  return rows.map(r => r.email).filter(Boolean);
+}
+
+// 管理者通知アドレス + 担当営業 + CS部員 を合算
+async function buildRecipients(salesDisplayName, csMemberNames) {
   const settings = await getEmailSettings();
   const salesEmail = await getSalesEmail(salesDisplayName);
-  return [...new Set([...(settings.notify_emails || []), ...(salesEmail ? [salesEmail] : [])])].filter(Boolean);
+  const csEmails = await getCsEmails(csMemberNames || []);
+  return [...new Set([
+    ...(settings.notify_emails || []),
+    ...(salesEmail ? [salesEmail] : []),
+    ...csEmails,
+  ])].filter(Boolean);
 }
 
 function addBusinessDays(date, days) {
@@ -200,7 +214,6 @@ function addBusinessDays(date, days) {
   }
   return d;
 }
-
 const DELIVERY_LABEL = (m) => m === 'onsite' ? '🚗 現地訪問' : '🖥 リモート';
 
 // ── DB Init ───────────────────────────────────────────────────
@@ -213,7 +226,10 @@ async function initDB() {
         name         TEXT NOT NULL UNIQUE,
         role         TEXT NOT NULL DEFAULT 'sales',
         password     TEXT NOT NULL,
-        email        TEXT DEFAULT ''
+        email        TEXT DEFAULT '',
+        display_name TEXT,
+        login_id     TEXT,
+        area         TEXT DEFAULT '東京'
       );
       CREATE TABLE IF NOT EXISTS projects (
         id              TEXT PRIMARY KEY,
@@ -227,15 +243,18 @@ async function initDB() {
         confirmed_date  TEXT,
         cancel_reason   TEXT DEFAULT '',
         scheduled_at    TIMESTAMPTZ,
+        cs_members      TEXT DEFAULT '[]',
+        shortage_reason TEXT DEFAULT '',
         created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS schedule_candidates (
-        id             TEXT PRIMARY KEY,
-        project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        candidate_date TEXT NOT NULL,
-        candidate_time TEXT DEFAULT '',
-        label          TEXT
+        id                TEXT PRIMARY KEY,
+        project_id        TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        candidate_date    TEXT NOT NULL,
+        candidate_date_to TEXT DEFAULT '',
+        candidate_time    TEXT DEFAULT '',
+        label             TEXT
       );
       CREATE TABLE IF NOT EXISTS blocked_dates (
         id         TEXT PRIMARY KEY,
@@ -259,8 +278,9 @@ async function initDB() {
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS candidate_days INTEGER DEFAULT 1`);
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS cancel_reason TEXT DEFAULT ''`);
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ`);
+    await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS cs_members TEXT DEFAULT '[]'`);
+    await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS shortage_reason TEXT DEFAULT ''`);
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT ''`);
-    // display_name / login_id 追加（既存の name を login_id として引き継ぎ、display_name も同値で初期化）
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`);
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS login_id TEXT`);
     await client.query(`UPDATE users SET display_name = name WHERE display_name IS NULL`);
@@ -268,7 +288,7 @@ async function initDB() {
     await client.query(`ALTER TABLE users ADD CONSTRAINT users_login_id_unique UNIQUE (login_id)`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS area TEXT DEFAULT '東京'`);
     await client.query(`ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS area TEXT NOT NULL DEFAULT '東京'`);
-    // projects.sales_rep は login_id を保持する想定（既存データは name=login_id のため互換）
+    await client.query(`ALTER TABLE schedule_candidates ADD COLUMN IF NOT EXISTS candidate_date_to TEXT DEFAULT ''`);
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
     if (parseInt(rows[0].c) === 0) {
@@ -295,23 +315,32 @@ app.use(express.json());
 const CLIENT_BUILD = path.join(__dirname, '../client/dist');
 if (fs.existsSync(CLIENT_BUILD)) app.use(express.static(CLIENT_BUILD));
 
-// ── Auth（login_idでログイン）──────────────────────────────────
+// ── Auth ──────────────────────────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
-  const { name, password } = req.body; // name パラメータに login_id を入れて送ってもらう（互換維持）
+  const { name, password } = req.body;
   const { rows } = await pool.query(
-    'SELECT id,name,display_name,login_id,role,area FROM users WHERE login_id=$1 AND password=$2',
-    [name, password]
+    'SELECT id,name,display_name,login_id,role,area FROM users WHERE login_id=$1 AND password=$2', [name, password]
   );
   if (!rows[0]) return res.status(401).json({ error: 'ログインIDまたはパスワードが違います' });
   const u = rows[0];
   res.json({ id: u.id, name: u.display_name || u.name, login_id: u.login_id, role: u.role, area: u.area || '東京' });
 });
 
-// ── Users（営業） ────────────────────────────────────────────
-app.get('/api/users', async (_req, res) => {
-  const { rows } = await pool.query(
-    "SELECT id,display_name,login_id,email,area FROM users WHERE role='sales' ORDER BY display_name"
+// ── ユーザー共通ヘルパー ──────────────────────────────────────
+async function upsertUser(id, { display_name, login_id, password, email, area, role }) {
+  await pool.query(
+    `UPDATE users SET
+      display_name=COALESCE($1,display_name), name=COALESCE($1,name),
+      login_id=COALESCE($2,login_id), password=COALESCE($3,password),
+      email=COALESCE($4,email), area=COALESCE($5,area)
+     WHERE id=$6`,
+    [display_name || null, login_id || null, password || null, email !== undefined ? email : null, area || null, id]
   );
+}
+
+// ── 営業 CRUD ─────────────────────────────────────────────────
+app.get('/api/users', async (_req, res) => {
+  const { rows } = await pool.query("SELECT id,display_name,login_id,email,area FROM users WHERE role='sales' ORDER BY display_name");
   res.json(rows);
 });
 app.post('/api/users', async (req, res) => {
@@ -320,48 +349,34 @@ app.post('/api/users', async (req, res) => {
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
-  await pool.query(
-    'INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
-    [id, display_name, login_id, 'sales', password, email || '', area || '東京']
-  );
+  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
+    [id, display_name, login_id, 'sales', password, email || '', area || '東京']);
   res.status(201).json({ id, display_name, login_id, role: 'sales', email: email || '', area: area || '東京' });
 });
 app.put('/api/users/:id', async (req, res) => {
   const { display_name, login_id, password, email, area } = req.body;
   const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'ユーザーが見つかりません' });
-  if (rows[0].role === 'admin') return res.status(403).json({ error: 'このAPIでは管理者アカウントを変更できません（/api/admins を使用してください）' });
+  if (rows[0].role === 'admin') return res.status(403).json({ error: '管理者はこのAPIから変更できません' });
   if (login_id) {
     const dup = await pool.query('SELECT id FROM users WHERE login_id=$1 AND id!=$2', [login_id, req.params.id]);
     if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   }
-  await pool.query(
-    `UPDATE users SET
-      display_name=COALESCE($1,display_name),
-      name=COALESCE($1,name),
-      login_id=COALESCE($2,login_id),
-      password=COALESCE($3,password),
-      email=COALESCE($4,email),
-      area=COALESCE($5,area)
-     WHERE id=$6`,
-    [display_name || null, login_id || null, password || null, email !== undefined ? email : null, area || null, req.params.id]
-  );
+  await upsertUser(req.params.id, { display_name, login_id, password, email, area });
   const { rows: u } = await pool.query('SELECT id,display_name,login_id,email,area FROM users WHERE id=$1', [req.params.id]);
   res.json(u[0]);
 });
 app.delete('/api/users/:id', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'ユーザーが見つかりません' });
-  if (rows[0].role === 'admin') return res.status(403).json({ error: 'このAPIでは管理者アカウントを削除できません' });
+  if (rows[0].role === 'admin') return res.status(403).json({ error: '管理者はこのAPIから削除できません' });
   await pool.query('DELETE FROM users WHERE id=$1', [req.params.id]);
   res.json({ success: true });
 });
 
-// ── Admins（管理者の複数管理） ──────────────────────────────────
+// ── 管理者 CRUD ───────────────────────────────────────────────
 app.get('/api/admins', async (_req, res) => {
-  const { rows } = await pool.query(
-    "SELECT id,display_name,login_id,email,area FROM users WHERE role='admin' ORDER BY display_name"
-  );
+  const { rows } = await pool.query("SELECT id,display_name,login_id,email,area FROM users WHERE role='admin' ORDER BY display_name");
   res.json(rows);
 });
 app.post('/api/admins', async (req, res) => {
@@ -370,10 +385,8 @@ app.post('/api/admins', async (req, res) => {
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
-  await pool.query(
-    'INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
-    [id, display_name, login_id, 'admin', password, email || '', area || '東京']
-  );
+  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
+    [id, display_name, login_id, 'admin', password, email || '', area || '東京']);
   res.status(201).json({ id, display_name, login_id, role: 'admin', email: email || '', area: area || '東京' });
 });
 app.put('/api/admins/:id', async (req, res) => {
@@ -385,23 +398,13 @@ app.put('/api/admins/:id', async (req, res) => {
     const dup = await pool.query('SELECT id FROM users WHERE login_id=$1 AND id!=$2', [login_id, req.params.id]);
     if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   }
-  await pool.query(
-    `UPDATE users SET
-      display_name=COALESCE($1,display_name),
-      name=COALESCE($1,name),
-      login_id=COALESCE($2,login_id),
-      password=COALESCE($3,password),
-      email=COALESCE($4,email),
-      area=COALESCE($5,area)
-     WHERE id=$6`,
-    [display_name || null, login_id || null, password || null, email !== undefined ? email : null, area || null, req.params.id]
-  );
+  await upsertUser(req.params.id, { display_name, login_id, password, email, area });
   const { rows: u } = await pool.query('SELECT id,display_name,login_id,email,area FROM users WHERE id=$1', [req.params.id]);
   res.json(u[0]);
 });
 app.delete('/api/admins/:id', async (req, res) => {
-  const { rows: allAdmins } = await pool.query("SELECT id FROM users WHERE role='admin'");
-  if (allAdmins.length <= 1) return res.status(400).json({ error: '最後の管理者アカウントは削除できません' });
+  const { rows: all } = await pool.query("SELECT id FROM users WHERE role='admin'");
+  if (all.length <= 1) return res.status(400).json({ error: '最後の管理者アカウントは削除できません' });
   const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '管理者が見つかりません' });
   if (rows[0].role !== 'admin') return res.status(400).json({ error: '管理者アカウントではありません' });
@@ -409,14 +412,46 @@ app.delete('/api/admins/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// ── Blocked Dates（エリアごとに管理） ───────────────────────────
+// ── CS部員 CRUD ───────────────────────────────────────────────
+app.get('/api/cs-members', async (_req, res) => {
+  const { rows } = await pool.query("SELECT id,display_name,login_id,email,area FROM users WHERE role='cs' ORDER BY area, display_name");
+  res.json(rows);
+});
+app.post('/api/cs-members', async (req, res) => {
+  const { display_name, login_id, password, email, area } = req.body;
+  if (!display_name || !login_id || !password) return res.status(400).json({ error: '表示名・ログインID・パスワードは必須です' });
+  const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
+  if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
+  const id = uuidv4();
+  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
+    [id, display_name, login_id, 'cs', password, email || '', area || '東京']);
+  res.status(201).json({ id, display_name, login_id, role: 'cs', email: email || '', area: area || '東京' });
+});
+app.put('/api/cs-members/:id', async (req, res) => {
+  const { display_name, login_id, password, email, area } = req.body;
+  const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'CS部員が見つかりません' });
+  if (login_id) {
+    const dup = await pool.query('SELECT id FROM users WHERE login_id=$1 AND id!=$2', [login_id, req.params.id]);
+    if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
+  }
+  await upsertUser(req.params.id, { display_name, login_id, password, email, area });
+  const { rows: u } = await pool.query('SELECT id,display_name,login_id,email,area FROM users WHERE id=$1', [req.params.id]);
+  res.json(u[0]);
+});
+app.delete('/api/cs-members/:id', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'CS部員が見つかりません' });
+  await pool.query('DELETE FROM users WHERE id=$1', [req.params.id]);
+  res.json({ success: true });
+});
+
+// ── Blocked Dates ─────────────────────────────────────────────
 app.get('/api/blocked-dates', async (req, res) => {
   const { area } = req.query;
-  if (area) {
-    const { rows } = await pool.query('SELECT * FROM blocked_dates WHERE area=$1 ORDER BY date, time_from', [area]);
-    return res.json(rows);
-  }
-  const { rows } = await pool.query('SELECT * FROM blocked_dates ORDER BY date, time_from');
+  const { rows } = area
+    ? await pool.query('SELECT * FROM blocked_dates WHERE area=$1 ORDER BY date, time_from', [area])
+    : await pool.query('SELECT * FROM blocked_dates ORDER BY date, time_from');
   res.json(rows);
 });
 app.post('/api/blocked-dates', async (req, res) => {
@@ -434,18 +469,12 @@ app.delete('/api/blocked-dates/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// ── Conflict check（エリアを考慮） ──────────────────────────────
+// ── Conflict check ────────────────────────────────────────────
 app.get('/api/schedule/conflicts', async (req, res) => {
   const { date, time, exclude_project_id, area } = req.query;
   if (!date) return res.status(400).json({ error: 'date required' });
-
-  // エリア指定がある場合はそのエリアの予定不可日のみチェック
-  const blockedQuery = area
-    ? 'SELECT * FROM blocked_dates WHERE date=$1 AND area=$2'
-    : 'SELECT * FROM blocked_dates WHERE date=$1';
-  const blockedParams = area ? [date, area] : [date];
-  const { rows: blocked } = await pool.query(blockedQuery, blockedParams);
-
+  const blockedQ = area ? 'SELECT * FROM blocked_dates WHERE date=$1 AND area=$2' : 'SELECT * FROM blocked_dates WHERE date=$1';
+  const { rows: blocked } = await pool.query(blockedQ, area ? [date, area] : [date]);
   const isBlocked = blocked.some(b => {
     if (!b.time_from && !b.time_to) return true;
     if (!time) return true;
@@ -453,7 +482,6 @@ app.get('/api/schedule/conflicts', async (req, res) => {
     if (b.time_to && time > b.time_to) return false;
     return true;
   });
-
   const params = [date];
   let extra = '';
   if (time) { params.push(time); extra += ` AND (sc.candidate_time=$${params.length} OR sc.candidate_time='')`; }
@@ -477,8 +505,7 @@ app.put('/api/settings/email', async (req, res) => {
   const { provider, from, notify_emails, gmail_user, gmail_app_password } = req.body;
   const existing = await getEmailSettings();
   const value = JSON.stringify({
-    provider: provider || 'gmail', from: from || '',
-    notify_emails: notify_emails || [], gmail_user: gmail_user || '',
+    provider: provider || 'gmail', from: from || '', notify_emails: notify_emails || [], gmail_user: gmail_user || '',
     gmail_app_password: (gmail_app_password && gmail_app_password !== '********') ? gmail_app_password : (existing.gmail_app_password || ''),
   });
   await pool.query("INSERT INTO settings (key,value) VALUES ('email_settings',$1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
@@ -496,23 +523,20 @@ app.post('/api/settings/email/test', async (req, res) => {
   if (result?.skipped) return res.status(400).json({ error: 'メール設定が未完了です' });
   res.json({ success: true });
 });
-
-// ── Email Templates（管理者が編集）─────────────────────────────
-app.get('/api/settings/email-templates', async (_req, res) => {
-  res.json(await getEmailTemplates());
-});
+app.get('/api/settings/email-templates', async (_req, res) => { res.json(await getEmailTemplates()); });
 app.put('/api/settings/email-templates', async (req, res) => {
-  const templates = req.body;
-  await pool.query(
-    "INSERT INTO settings (key,value) VALUES ('email_templates',$1) ON CONFLICT (key) DO UPDATE SET value=$1",
-    [JSON.stringify(templates)]
-  );
+  await pool.query("INSERT INTO settings (key,value) VALUES ('email_templates',$1) ON CONFLICT (key) DO UPDATE SET value=$1", [JSON.stringify(req.body)]);
   res.json({ success: true });
 });
-app.post('/api/settings/email-templates/reset', async (req, res) => {
+app.post('/api/settings/email-templates/reset', async (_req, res) => {
   await pool.query("DELETE FROM settings WHERE key='email_templates'");
   res.json(DEFAULT_TEMPLATES);
 });
+
+// ── Projects helper ───────────────────────────────────────────
+function parseProject(p) {
+  return { ...p, cs_members: JSON.parse(p.cs_members || '[]') };
+}
 
 // ── Projects ──────────────────────────────────────────────────
 app.get('/api/projects', async (_req, res) => {
@@ -520,87 +544,81 @@ app.get('/api/projects', async (_req, res) => {
   const { rows: candidates } = await pool.query('SELECT * FROM schedule_candidates ORDER BY candidate_date');
   const candMap = {};
   candidates.forEach(c => { if (!candMap[c.project_id]) candMap[c.project_id] = []; candMap[c.project_id].push(c); });
-  res.json(projects.map(p => ({ ...p, candidates: candMap[p.id] || [] })));
+  res.json(projects.map(p => ({ ...parseProject(p), candidates: candMap[p.id] || [] })));
 });
 app.get('/api/projects/:id', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
   const { rows: candidates } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
-  res.json({ ...rows[0], candidates });
+  res.json({ ...parseProject(rows[0]), candidates });
 });
 
 // 新規登録
 app.post('/api/projects', async (req, res) => {
   const { client_name, project_type, sales_rep, memo, delivery_method, candidate_days } = req.body;
   if (!client_name || !project_type || !sales_rep) return res.status(400).json({ error: '必須項目が不足しています' });
-  if (memo && memo.length > 30) return res.status(400).json({ error: '備考は30文字以内で入力してください' });
+  if (memo && memo.length > 50) return res.status(400).json({ error: '備考は50文字以内で入力してください' });
   const id = uuidv4();
   await pool.query(
-    `INSERT INTO projects (id,client_name,project_type,sales_rep,memo,delivery_method,candidate_days,status) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')`,
+    `INSERT INTO projects (id,client_name,project_type,sales_rep,memo,delivery_method,candidate_days,status,cs_members) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending','[]')`,
     [id, client_name, project_type, sales_rep, memo || '', delivery_method || 'remote', candidate_days || 1]
   );
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [id]);
-  const project = { ...rows[0], candidates: [] };
-
-  // 管理者通知アドレス ＋ 担当営業のメールアドレス両方に送信
-  const allTo = await buildRecipients(sales_rep);
+  const project = { ...parseProject(rows[0]), candidates: [] };
+  // 管理者通知アドレス ＋ 担当営業へ送信
+  const allTo = await buildRecipients(sales_rep, []);
   if (allTo.length) {
     const result = await sendTemplatedEmail('schedule_proposed', allTo, {
       project_type, client_name, sales_rep,
       delivery_method: DELIVERY_LABEL(delivery_method),
-      candidate_days: candidate_days || 1,
-      memo: memo || 'なし',
+      candidate_days: candidate_days || 1, memo: memo || 'なし',
     });
     if (result?.error) console.error('[新規依頼メール送信エラー]', result.error);
-  } else {
-    console.log('[新規依頼メール スキップ] 送信先アドレスが登録されていません');
   }
   res.status(201).json(project);
 });
 
 // 更新
 app.put('/api/projects/:id', async (req, res) => {
-  const { client_name, project_type, sales_rep, memo, delivery_method, candidate_days, candidates, status, confirmed_date } = req.body;
-  if (memo && memo.length > 30) return res.status(400).json({ error: '備考は30文字以内で入力してください' });
+  const { client_name, project_type, sales_rep, memo, delivery_method, candidate_days, cs_members, candidates, status, confirmed_date } = req.body;
+  if (memo && memo.length > 50) return res.status(400).json({ error: '備考は50文字以内で入力してください' });
   const { rows: ex } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!ex[0]) return res.status(404).json({ error: '案件が見つかりません' });
   const p = ex[0];
+  const csMembersJson = cs_members !== undefined ? JSON.stringify(cs_members) : p.cs_members;
   await pool.query(
-    `UPDATE projects SET client_name=$1,project_type=$2,sales_rep=$3,memo=$4,status=$5,confirmed_date=$6,delivery_method=$7,candidate_days=$8,updated_at=NOW() WHERE id=$9`,
+    `UPDATE projects SET client_name=$1,project_type=$2,sales_rep=$3,memo=$4,status=$5,confirmed_date=$6,delivery_method=$7,candidate_days=$8,cs_members=$9,updated_at=NOW() WHERE id=$10`,
     [client_name??p.client_name, project_type??p.project_type, sales_rep??p.sales_rep, memo??p.memo,
-     status??p.status, confirmed_date??p.confirmed_date, delivery_method??p.delivery_method, candidate_days??p.candidate_days, req.params.id]
+     status??p.status, confirmed_date??p.confirmed_date, delivery_method??p.delivery_method, candidate_days??p.candidate_days, csMembersJson, req.params.id]
   );
   if (candidates !== undefined) {
-    if (candidates.length > 3) return res.status(400).json({ error: '候補日は最大3件までです' });
     await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
     for (let i = 0; i < candidates.length; i++) {
       const c = candidates[i];
-      await pool.query('INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_time,label) VALUES ($1,$2,$3,$4,$5)',
-        [uuidv4(), req.params.id, c.date, c.time || '', `第${i+1}候補`]);
+      await pool.query('INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_date_to,candidate_time,label) VALUES ($1,$2,$3,$4,$5,$6)',
+        [uuidv4(), req.params.id, c.date, c.date_to || '', c.time || '', `第${i+1}候補`]);
     }
   }
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   const { rows: cands } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
-  res.json({ ...rows[0], candidates: cands });
+  res.json({ ...parseProject(rows[0]), candidates: cands });
 });
 
-// 候補日 追加
+// 候補日 追加（希望日数上限チェック・ステータスはfinalizeまでpending維持）
 app.post('/api/projects/:id/candidates', async (req, res) => {
-  const { date, time } = req.body;
+  const { date, date_to, time } = req.body;
   if (!date) return res.status(400).json({ error: '日付は必須です' });
   const { rows: existing } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!existing[0]) return res.status(404).json({ error: '案件が見つかりません' });
   const maxDays = existing[0].candidate_days || 1;
   const { rows: cands } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
   if (cands.length >= maxDays) {
-    return res.status(400).json({ error: `この案件の希望候補日数は${maxDays}日です。${maxDays}件を超えて登録できません。` });
+    return res.status(400).json({ error: `希望候補日数は${maxDays}日です。${maxDays}件を超えて登録できません。` });
   }
-  await pool.query('INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_time,label) VALUES ($1,$2,$3,$4,$5)',
-    [uuidv4(), req.params.id, date, time || '', `第${cands.length+1}候補`]);
-  await pool.query(
-    "UPDATE projects SET updated_at=NOW(), status=CASE WHEN status='pending' THEN 'scheduled' ELSE status END WHERE id=$1",
-    [req.params.id]
-  );
+  await pool.query('INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_date_to,candidate_time,label) VALUES ($1,$2,$3,$4,$5,$6)',
+    [uuidv4(), req.params.id, date, date_to || '', time || '', `第${cands.length+1}候補`]);
+  // ステータスはfinalizeまでpendingのまま維持（scheduledには変更しない）
+  await pool.query('UPDATE projects SET updated_at=NOW() WHERE id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
   res.status(201).json(updated);
 });
@@ -614,128 +632,119 @@ app.delete('/api/projects/:id/candidates/:candidateId', async (req, res) => {
   for (let i = 0; i < remaining.length; i++) {
     await pool.query('UPDATE schedule_candidates SET label=$1 WHERE id=$2', [`第${i+1}候補`, remaining[i].id]);
   }
-  const newStatus = remaining.length === 0 ? 'pending' : 'scheduled';
-  await pool.query('UPDATE projects SET updated_at=NOW(), status=$1 WHERE id=$2', [newStatus, req.params.id]);
+  await pool.query('UPDATE projects SET updated_at=NOW() WHERE id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
   res.json(updated);
 });
 
-// ── 候補日の設定完了（管理者が候補日設定を確定し、案件ごとにまとめて通知）────
+// 候補日の設定完了（通知メール送信・ステータスをscheduledに変更）
 app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
-  const p = rows[0];
-
-  const { rows: cands } = await pool.query(
-    'SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]
-  );
-  if (cands.length === 0) {
-    return res.status(400).json({ error: '候補日が1件も登録されていません' });
-  }
-
+  const p = parseProject(rows[0]);
+  const { rows: cands } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
+  if (cands.length === 0) return res.status(400).json({ error: '候補日が1件も登録されていません' });
   const maxDays = p.candidate_days || 1;
-  if (cands.length > maxDays) {
-    return res.status(400).json({ error: `希望候補日数（${maxDays}日）を超えています。候補日を${maxDays}件以下に調整してください。` });
-  }
-  if (cands.length < maxDays) {
-    return res.status(400).json({ error: `希望候補日数は${maxDays}日です。現在${cands.length}件しか登録されていません。あと${maxDays - cands.length}件追加してください。` });
-  }
+  if (cands.length > maxDays) return res.status(400).json({ error: `希望候補日数（${maxDays}日）を超えています。${cands.length - maxDays}件削除してください。` });
+  if (cands.length < maxDays) return res.status(400).json({ error: `希望候補日数は${maxDays}日です。あと${maxDays - cands.length}件追加してください。` });
 
-  // ステータスを scheduled に確定（既に scheduled の場合もそのまま）
   await pool.query("UPDATE projects SET status='scheduled', updated_at=NOW() WHERE id=$1", [req.params.id]);
   const { rows: updatedProject } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
 
-  // 案件ごとにまとめて候補日一覧をメール通知（管理者＋担当営業）
-  const allTo = await buildRecipients(p.sales_rep);
+  const allTo = await buildRecipients(p.sales_rep, p.cs_members);
   if (allTo.length) {
-    const dateLines = cands.map(c =>
-      `${c.label}：${c.candidate_date}${c.candidate_time ? ' ' + c.candidate_time : ''}`
-    ).join('\n');
+    const dateLines = cands.map(c => {
+      let s = `${c.label}：${c.candidate_date}`;
+      if (c.candidate_date_to) s += `〜${c.candidate_date_to}`;
+      if (c.candidate_time) s += ` ${c.candidate_time}`;
+      return s;
+    }).join('\n');
     await sendTemplatedEmail('candidates_set', allTo, {
       project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
       delivery_method: DELIVERY_LABEL(p.delivery_method),
+      cs_members: p.cs_members.length ? p.cs_members.join('、') : 'なし',
       candidate_list: dateLines,
     });
   }
-
-  res.json({ ...updatedProject[0], candidates: cands });
+  res.json({ ...parseProject(updatedProject[0]), candidates: cands });
 });
 
-// ── 仮スケジュールを確定（営業・管理者どちらも可）──────────────
+// 仮スケジュールを確定（CS部員選択・不足理由）
 app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
-  const { confirmed_date, confirmed_time } = req.body;
+  const { confirmed_date, confirmed_time, cs_members, shortage_reason } = req.body;
   if (!confirmed_date) return res.status(400).json({ error: '確定日を選択してください' });
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
-  const p = rows[0];
+  const p = parseProject(rows[0]);
   const fullDate = confirmed_time ? `${confirmed_date} ${confirmed_time}` : confirmed_date;
+  const csMembersArr = cs_members || p.cs_members || [];
+  const csMembersJson = JSON.stringify(csMembersArr);
+
+  // 不足理由チェック：候補日1件以上あるのに確定した場合、候補日数<希望日数なら理由必須
+  const { rows: cands } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
+  const needsReason = cands.length < (p.candidate_days || 1);
+  if (needsReason && !shortage_reason?.trim()) {
+    return res.status(400).json({ error: '希望日数より少ない候補日での確定です。理由を入力してください。' });
+  }
 
   await pool.query(
-    `UPDATE projects SET confirmed_date=$1, status='confirmed', scheduled_at=NOW(), updated_at=NOW() WHERE id=$2`,
-    [fullDate, req.params.id]
+    `UPDATE projects SET confirmed_date=$1, status='confirmed', scheduled_at=NOW(), updated_at=NOW(), cs_members=$2, shortage_reason=$3 WHERE id=$4`,
+    [fullDate, csMembersJson, shortage_reason || '', req.params.id]
   );
   await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
-  const project = { ...updated[0], candidates: [] };
+  const project = { ...parseProject(updated[0]), candidates: [] };
 
-  const allTo = await buildRecipients(p.sales_rep);
+  const allTo = await buildRecipients(p.sales_rep, csMembersArr);
   if (allTo.length) {
+    const shortageReasonLine = shortage_reason?.trim() ? `不足理由：${shortage_reason.trim()}` : '';
     await sendTemplatedEmail('schedule_confirmed', allTo, {
       project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
-      delivery_method: DELIVERY_LABEL(p.delivery_method), confirmed_date: fullDate,
+      delivery_method: DELIVERY_LABEL(p.delivery_method),
+      cs_members: csMembersArr.length ? csMembersArr.join('、') : 'なし',
+      confirmed_date: fullDate, shortage_reason_line: shortageReasonLine,
     });
   }
   res.json(project);
 });
 
-// ── キャンセル ────────────────────────────────────────────────
+// キャンセル
 app.post('/api/projects/:id/cancel', async (req, res) => {
   const { reason } = req.body;
-  if (!reason || !reason.trim()) return res.status(400).json({ error: 'キャンセル理由を入力してください' });
+  if (!reason?.trim()) return res.status(400).json({ error: 'キャンセル理由を入力してください' });
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
-  const p = rows[0];
-
+  const p = parseProject(rows[0]);
   await pool.query(`UPDATE projects SET status='cancelled', cancel_reason=$1, updated_at=NOW() WHERE id=$2`, [reason.trim(), req.params.id]);
   await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
-
-  const allTo = await buildRecipients(p.sales_rep);
+  const allTo = await buildRecipients(p.sales_rep, p.cs_members);
   if (allTo.length) {
     await sendTemplatedEmail('schedule_cancelled', allTo, {
       project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
       confirmed_date: p.confirmed_date || '未確定', cancel_reason: reason.trim(),
     });
   }
-  res.json({ ...updated[0], candidates: [] });
+  res.json({ ...parseProject(updated[0]), candidates: [] });
 });
 
-// ── リマインド ────────────────────────────────────────────────
+// リマインド
 app.post('/api/projects/:id/remind', async (req, res) => {
   const { requester_login_id } = req.body || {};
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
-  const p = rows[0];
+  const p = parseProject(rows[0]);
   const settings = await getEmailSettings();
   const salesEmail = await getSalesEmail(p.sales_rep);
-
-  // リクエストを送った本人（営業 or 管理者）のメールアドレスも取得
   let requesterEmail = null;
   if (requester_login_id) {
-    const { rows: reqUser } = await pool.query('SELECT email FROM users WHERE login_id=$1', [requester_login_id]);
-    requesterEmail = reqUser[0]?.email || null;
+    const { rows: r } = await pool.query('SELECT email FROM users WHERE login_id=$1', [requester_login_id]);
+    requesterEmail = r[0]?.email || null;
   }
-
   const allTo = [...new Set([
-    ...(settings.notify_emails || []),
-    ...(salesEmail ? [salesEmail] : []),
-    ...(requesterEmail ? [requesterEmail] : []),
+    ...(settings.notify_emails || []), ...(salesEmail ? [salesEmail] : []), ...(requesterEmail ? [requesterEmail] : []),
   ])].filter(Boolean);
-
-  if (!allTo.length) {
-    return res.status(400).json({ error: '送信先メールアドレスが登録されていません。管理者設定でメールアドレスを登録してください。' });
-  }
-
+  if (!allTo.length) return res.status(400).json({ error: '送信先メールアドレスが登録されていません。管理者設定でメールアドレスを登録してください。' });
   const result = await sendTemplatedEmail('reminder', allTo, {
     project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
     candidate_days: p.candidate_days || 1,
@@ -743,38 +752,28 @@ app.post('/api/projects/:id/remind', async (req, res) => {
   });
   if (result?.error) return res.status(500).json({ error: result.error });
   if (result?.skipped) return res.status(400).json({ error: 'メール送信設定（Gmail/Resend）が未完了です' });
-  res.json({ success: true, sent_to: allTo });
+  res.json({ success: true });
 });
 
-// ── 強制キャンセルバッチ ───────────────────────────────────────
+// 自動キャンセルバッチ
 async function runAutoCancel() {
   try {
-    const now = new Date();
     const { rows: projects } = await pool.query(`SELECT * FROM projects WHERE status='scheduled' AND scheduled_at IS NOT NULL`);
-    for (const p of projects) {
+    for (const p_ of projects) {
+      const p = parseProject(p_);
       const deadline = addBusinessDays(p.scheduled_at, 10);
       const warningDay = addBusinessDays(p.scheduled_at, 9);
-      const todayStr = now.toISOString().split('T')[0];
+      const todayStr = new Date().toISOString().split('T')[0];
       const deadlineStr = deadline.toISOString().split('T')[0];
       const warningStr = warningDay.toISOString().split('T')[0];
-
       if (todayStr >= deadlineStr) {
         await pool.query(`UPDATE projects SET status='cancelled', cancel_reason='未確定のため（自動キャンセル）', updated_at=NOW() WHERE id=$1`, [p.id]);
         await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [p.id]);
-        const allTo = await buildRecipients(p.sales_rep);
-        if (allTo.length) {
-          await sendTemplatedEmail('auto_cancelled', allTo, {
-            project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
-          });
-        }
+        const allTo = await buildRecipients(p.sales_rep, p.cs_members);
+        if (allTo.length) await sendTemplatedEmail('auto_cancelled', allTo, { project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep });
       } else if (todayStr === warningStr) {
-        const allTo = await buildRecipients(p.sales_rep);
-        if (allTo.length) {
-          await sendTemplatedEmail('auto_cancel_warning', allTo, {
-            project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
-            deadline_date: deadlineStr,
-          });
-        }
+        const allTo = await buildRecipients(p.sales_rep, p.cs_members);
+        if (allTo.length) await sendTemplatedEmail('auto_cancel_warning', allTo, { project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep, deadline_date: deadlineStr });
       }
     }
   } catch (e) { console.error('[AutoCancel error]', e.message); }
