@@ -71,6 +71,18 @@ export default function CalendarPage({ onNavigate }) {
   const toKey = d => d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : null;
   const today = toKey(new Date());
 
+  // 期間指定された候補日を展開して全日付に登録するヘルパー
+  function expandDateRange(dateFrom, dateTo) {
+    const dates = [];
+    const d = new Date(dateFrom);
+    const end = dateTo ? new Date(dateTo) : new Date(dateFrom);
+    while (d <= end) {
+      dates.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+      d.setDate(d.getDate() + 1);
+    }
+    return dates;
+  }
+
   const byDate = {};
   visibleProjects.forEach(p => {
     if (p.confirmed_date && p.status === 'confirmed') {
@@ -80,9 +92,16 @@ export default function CalendarPage({ onNavigate }) {
     }
     if (p.status !== 'cancelled') {
       (p.candidates || []).forEach(c => {
-        const k = c.candidate_date;
-        if (!byDate[k]) byDate[k] = [];
-        byDate[k].push({ ...p, _type: 'candidate', _time: c.candidate_time });
+        // 期間指定の場合は全日付にドットを付ける
+        const dates = expandDateRange(c.candidate_date, c.candidate_date_to);
+        dates.forEach((k, idx) => {
+          if (!byDate[k]) byDate[k] = [];
+          byDate[k].push({
+            ...p, _type: 'candidate', _time: c.candidate_time,
+            _candidate: c, _isPeriod: dates.length > 1,
+            _isPeriodStart: idx === 0, _isPeriodEnd: idx === dates.length - 1,
+          });
+        });
       });
     }
   });
@@ -157,13 +176,18 @@ export default function CalendarPage({ onNavigate }) {
           const isBlocked = k ? blockedSet.has(k) : false;
           const isToday = k === today;
           const isSelected = k === selected;
+          // 期間候補日の中日かどうか（開始でも終了でもない）
+          const hasPeriodMiddle = entries?.some(e => e._isPeriod && !e._isPeriodStart && !e._isPeriodEnd);
+          const hasPeriodStart = entries?.some(e => e._isPeriodStart && e._isPeriod);
+          const hasPeriodEnd = entries?.some(e => e._isPeriodEnd && e._isPeriod);
 
           return (
             <div key={i} onClick={() => d && setSelected(k === selected ? null : k)}
               style={{
-                minHeight: 44, padding: '6px 4px', borderRadius: 8, cursor: d ? 'pointer' : 'default',
-                background: isSelected ? 'var(--accent)' : isBlocked ? 'rgba(239,68,68,0.1)' : isToday ? 'rgba(59,130,246,0.12)' : entries ? 'rgba(255,255,255,0.04)' : 'transparent',
+                minHeight: 44, padding: '6px 4px', cursor: d ? 'pointer' : 'default',
+                background: isSelected ? 'var(--accent)' : isBlocked ? 'rgba(239,68,68,0.1)' : isToday ? 'rgba(59,130,246,0.12)' : hasPeriodMiddle ? 'rgba(245,158,11,0.12)' : entries ? 'rgba(255,255,255,0.04)' : 'transparent',
                 border: isToday && !isSelected ? '1px solid var(--accent)' : isBlocked && !isSelected ? '1px solid rgba(239,68,68,0.3)' : '1px solid transparent',
+                borderRadius: hasPeriodMiddle ? '0' : hasPeriodStart ? '8px 0 0 8px' : hasPeriodEnd ? '0 8px 8px 0' : '8px',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
               }}>
               {d && (
@@ -188,6 +212,7 @@ export default function CalendarPage({ onNavigate }) {
       <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: '0.72rem', color: 'var(--text-sub)', flexWrap: 'wrap' }}>
         <span><span style={{ color: 'var(--success)' }}>●</span> 確定日</span>
         <span><span style={{ color: 'var(--warning)' }}>●</span> 候補日</span>
+        <span><span style={{ background: 'rgba(245,158,11,0.3)', padding: '0 4px', borderRadius: 2 }}>　</span> 期間候補日</span>
         <span><span style={{ color: 'var(--danger)' }}>●</span> 予定不可</span>
       </div>
 
@@ -220,6 +245,12 @@ export default function CalendarPage({ onNavigate }) {
                     <span>👤 {p.sales_rep}</span>
                     <span>{DELIVERY_LABELS[p.delivery_method] || ''}</span>
                     {p._type === 'candidate' && p._time && <span>🕐 {p._time}</span>}
+                    {p._type === 'candidate' && p._isPeriod && (
+                      <span style={{ color: 'var(--warning)' }}>
+                        📅 期間 {p._candidate?.candidate_date}〜{p._candidate?.candidate_date_to}
+                        {p._isPeriodStart ? '（開始）' : p._isPeriodEnd ? '（終了）' : '（期間中）'}
+                      </span>
+                    )}
                     <span style={{ color: p._type === 'confirmed' ? 'var(--success)' : 'var(--warning)' }}>
                       {p._type === 'confirmed' ? '✅ 確定' : '🗓 候補'}
                     </span>

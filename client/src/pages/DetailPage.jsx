@@ -18,10 +18,13 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '' });
   const [conflicts, setConflicts] = useState(null);
 
-  // 確定モーダル（CS部員選択・不足理由）
+  // 確定モーダル（CS部員選択）
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState(null);
   const [selectedCs, setSelectedCs] = useState([]);
+
+  // 設定完了モーダル（不足理由入力）
+  const [showFinalizeModal, setShowFinalizeModal] = useState(false);
   const [shortageReason, setShortageReason] = useState('');
 
   // キャンセルモーダル
@@ -55,22 +58,17 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     setShowConfirmModal(true);
   };
 
-  // 仮スケジュール確定
+  // 仮スケジュール確定（CS部員選択のみ・不足理由は設定完了時に入力済み）
   const handleConfirmSchedule = async () => {
     if (!confirmTarget) return;
     if (selectedCs.length > 2) { addToast('CS部員は最大2名まで選択できます', 'error'); return; }
-    const cands = project.candidates || [];
-    const needsReason = cands.length < (project.candidate_days || 1);
-    if (needsReason && !shortageReason.trim()) {
-      addToast('希望日数より少ない候補日での確定です。理由を入力してください', 'error'); return;
-    }
     setBusy(true);
     try {
       const updated = await api.confirmSchedule(projectId, {
         confirmed_date: confirmTarget.candidate_date,
         confirmed_time: confirmTarget.candidate_time,
         cs_members: selectedCs,
-        shortage_reason: shortageReason,
+        shortage_reason: project.shortage_reason || '',
       });
       setProject(updated);
       setShowConfirmModal(false);
@@ -150,16 +148,32 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     finally { setBusy(false); }
   };
 
-  const handleFinalizeCandidates = async () => {
+  // 設定完了ボタン押下 → 不足チェック → 必要なら理由入力モーダル → API呼び出し
+  const handleFinalizeCandidates = () => {
     const maxDays = project.candidate_days || 1;
     const currentCount = project.candidates?.length || 0;
     if (currentCount > maxDays) { addToast(`希望候補日数（${maxDays}日）を超えています。${currentCount - maxDays}件削除してください`, 'error'); return; }
-    if (currentCount < maxDays) { addToast(`希望候補日数は${maxDays}日です。あと${maxDays - currentCount}件追加してください`, 'error'); return; }
-    if (!confirm(`候補日${currentCount}件で設定完了とし、管理者と${project.sales_rep}さんに通知メールを送信しますか？`)) return;
+    if (currentCount === 0) { addToast('候補日を1件以上登録してください', 'error'); return; }
+    // 不足の場合はモーダルで理由入力 / ちょうどの場合は即確認
+    if (currentCount < maxDays) {
+      setShortageReason('');
+      setShowFinalizeModal(true);
+    } else {
+      doFinalize('');
+    }
+  };
+
+  const doFinalize = async (reason) => {
     setBusy(true);
     try {
+      // サーバー側に shortage_reason を渡すため updateProject で先に保存してから finalize
+      if (reason) {
+        await api.updateProject(projectId, { shortage_reason: reason });
+      }
       const updated = await api.finalizeCandidates(projectId);
-      setProject(updated);
+      setProject({ ...updated, shortage_reason: reason || updated.shortage_reason });
+      setShowFinalizeModal(false);
+      setShortageReason('');
       addToast('候補日の設定が完了し、通知メールを送信しました');
       onRefresh();
     } catch (err) { addToast(err.message, 'error'); }
@@ -198,7 +212,8 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const canEditCandidates = isAdmin && !isCancelled && !isDelivered && !isConfirmed;
   const hasAnyCandidates = (project.candidates?.length || 0) > 0;
   const canConfirm = hasAnyCandidates && (isOwner || isAdmin) && !isCancelled && !isConfirmed && !isDelivered;
-  const canRemind = isPending && (isOwner || isAdmin);
+  // リマインドは営業担当が管理者へ候補日設定を促すための機能なので、営業（担当者）のみ
+  const canRemind = isPending && isOwner && !isAdmin;
   const canCancel = !isCancelled && !isDelivered;
 
   const cands = project.candidates || [];
@@ -254,28 +269,45 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
               )}
             </div>
 
-            {/* 希望日数より少ない場合は理由入力必須 */}
-            {cands.length < maxDays && (
-              <div className="form-group">
-                <label style={{ color:'var(--warning)' }}>
-                  ⚠️ 不足理由（必須）
-                  <span style={{ fontWeight:400,fontSize:'0.75rem',marginLeft:6 }}>
-                    希望{maxDays}日に対して候補日が{cands.length}件のみで確定します
-                  </span>
-                </label>
-                <textarea
-                  value={shortageReason}
-                  onChange={e => setShortageReason(e.target.value)}
-                  placeholder="希望日数を満たせなかった理由を入力してください"
-                  style={{ minHeight:70 }}
-                />
-              </div>
-            )}
-
             <div style={{ display:'flex',gap:8 }}>
               <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => setShowConfirmModal(false)}>キャンセル</button>
               <button className="btn btn-success" style={{ flex:1 }} onClick={handleConfirmSchedule} disabled={busy}>
                 {busy ? '確定中...' : '確定する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 設定完了モーダル（候補日不足時の理由入力） */}
+      {showFinalizeModal && (
+        <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
+          <div style={{ background:'var(--navy-mid)',border:'1px solid var(--border)',borderRadius:16,padding:24,width:'100%',maxWidth:400 }}>
+            <div style={{ fontWeight:700,fontSize:'1.1rem',marginBottom:8,color:'var(--warning)' }}>
+              ⚠️ 候補日が希望日数より少ない状態で設定完了します
+            </div>
+            <div style={{ fontSize:'0.82rem',color:'var(--text-sub)',marginBottom:16,lineHeight:1.6 }}>
+              希望候補日数：{project?.candidate_days || 1}日 ／ 現在の候補日：{project?.candidates?.length || 0}件<br />
+              やむを得ない理由がある場合は、以下に理由を入力して設定完了できます。
+            </div>
+            <div className="form-group">
+              <label>不足理由 *</label>
+              <textarea
+                value={shortageReason}
+                onChange={e => setShortageReason(e.target.value)}
+                placeholder="希望日数を満たせなかった理由を入力してください"
+                style={{ minHeight:80 }}
+                autoFocus
+              />
+            </div>
+            <div style={{ display:'flex',gap:8 }}>
+              <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => { setShowFinalizeModal(false); setShortageReason(''); }}>
+                キャンセル
+              </button>
+              <button className="btn btn-warning" style={{ flex:1, background:'var(--warning)', color:'#fff' }}
+                onClick={() => { if (!shortageReason.trim()) { alert('不足理由を入力してください'); return; } doFinalize(shortageReason); }}
+                disabled={busy}>
+                {busy ? '処理中...' : '理由を入力して設定完了'}
               </button>
             </div>
           </div>
