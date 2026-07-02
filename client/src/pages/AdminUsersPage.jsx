@@ -550,7 +550,7 @@ function BlockedTab({ addToast }) {
 
 // ── メール設定 ────────────────────────────────────────────────
 function EmailTab({ addToast }) {
-  const [settings, setSettings] = useState({ provider: 'gmail', gmail_user: '', gmail_app_password: '', notify_emails: [], from: '' });
+  const [settings, setSettings] = useState({ provider: 'gmail_api', gmail_user: '', gmail_app_password: '', notify_emails: [], from: '' });
   const [newEmail, setNewEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -584,22 +584,23 @@ function EmailTab({ addToast }) {
     <>
       <div className="card">
         <div className="section-title">メール送信方法</div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {[
-            { value: 'gmail', label: '📨 Gmail SMTP', sub: 'ドメイン不要（要Render有料プラン）' },
+            { value: 'gmail_api', label: '🔑 Gmail API（OAuth2）', sub: '推奨 — 独自ドメイン不要・Render無料枠でも動作（環境変数に GMAIL_CLIENT_ID 等を設定）' },
+            { value: 'gmail_smtp', label: '📨 Gmail SMTP', sub: '独自ドメイン不要だが Render 有料プランが必要' },
             { value: 'resend', label: '⚡ Resend API', sub: '独自ドメイン必要' },
           ].map(opt => (
             <label key={opt.value} style={{
-              flex: 1, display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer',
+              display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer',
               padding: '12px 14px', borderRadius: 10,
-              background: settings.provider === opt.value ? 'rgba(59,130,246,0.12)' : 'var(--card-bg)',
-              border: `1px solid ${settings.provider === opt.value ? 'var(--accent)' : 'var(--border)'}`,
+              background: (settings.provider || 'gmail_api') === opt.value ? 'rgba(59,130,246,0.12)' : 'var(--card-bg)',
+              border: `1px solid ${(settings.provider || 'gmail_api') === opt.value ? 'var(--accent)' : 'var(--border)'}`,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="radio" name="provider" value={opt.value}
-                  checked={(settings.provider || 'gmail') === opt.value}
+                  checked={(settings.provider || 'gmail_api') === opt.value}
                   onChange={() => setField('provider', opt.value)} style={{ width: 'auto', margin: 0 }} />
-                <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{opt.label}</span>
+                <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{opt.label}</span>
               </div>
               <span style={{ fontSize: '0.7rem', color: 'var(--text-sub)', paddingLeft: 22 }}>{opt.sub}</span>
             </label>
@@ -607,9 +608,36 @@ function EmailTab({ addToast }) {
         </div>
       </div>
 
-      {(settings.provider || 'gmail') === 'gmail' && (
+      {/* Gmail API 設定確認 */}
+      {(settings.provider || 'gmail_api') === 'gmail_api' && (
         <div className="card">
-          <div className="section-title">Gmail アカウント設定</div>
+          <div className="section-title">Gmail API 設定状態</div>
+          <div style={{ fontSize: '0.82rem', color: 'var(--text-sub)', lineHeight: 1.8 }}>
+            以下の環境変数を Render.com のダッシュボードで設定してください。
+          </div>
+          {[
+            { key: 'GMAIL_CLIENT_ID', label: 'クライアントID', hint: 'GCP OAuth2 クライアントID' },
+            { key: 'GMAIL_CLIENT_SECRET', label: 'クライアントシークレット', hint: 'GCP OAuth2 シークレット' },
+            { key: 'GMAIL_REFRESH_TOKEN', label: 'リフレッシュトークン', hint: 'OAuth Playground で取得' },
+            { key: 'GMAIL_SENDER_ADDRESS', label: '送信者メールアドレス', hint: '例: your@gmail.com' },
+          ].map(item => (
+            <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--accent-lt)' }}>{item.key}</div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-sub)' }}>{item.hint}</div>
+              </div>
+            </div>
+          ))}
+          <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, fontSize: '0.75rem', color: 'var(--text-sub)', lineHeight: 1.7 }}>
+            ⚠️ OAuthの同意画面を「本番環境」に設定してください。「テスト」のままだとリフレッシュトークンが7日で失効します。
+          </div>
+        </div>
+      )}
+
+      {/* Gmail SMTP 設定 */}
+      {settings.provider === 'gmail_smtp' && (
+        <div className="card">
+          <div className="section-title">Gmail SMTP 設定</div>
           <div className="form-group">
             <label>Gmailアドレス *</label>
             <input type="email" value={settings.gmail_user || ''} onChange={e => setField('gmail_user', e.target.value)} placeholder="your-account@gmail.com" />
@@ -621,6 +649,7 @@ function EmailTab({ addToast }) {
         </div>
       )}
 
+      {/* Resend 設定 */}
       {settings.provider === 'resend' && (
         <div className="card">
           <div className="section-title">Resend 設定</div>
@@ -649,7 +678,7 @@ function EmailTab({ addToast }) {
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
-        <button className="btn btn-ghost" style={{ flex: 1 }} onClick={handleTest} disabled={testing}>{testing ? '送信中...' : '📨 テスト送信'}</button>
+        <button className="btn btn-ghost" style={{ flex: 1 }} onClick={handleTest} disabled={testing}>{testing ? '送信中...' : '📨 テスト送信（設定確認）'}</button>
         <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleSave} disabled={loading}>{loading ? '保存中...' : '設定を保存'}</button>
       </div>
     </>
