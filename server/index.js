@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { Resend } = require('resend');
 const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -20,8 +21,65 @@ const pool = new Pool({
 // ── Email helpers ─────────────────────────────────────────────
 async function getEmailSettings() {
   const { rows } = await pool.query("SELECT value FROM settings WHERE key='email_settings'");
-  if (!rows[0]) return { provider: 'gmail', from: '', notify_emails: [], gmail_user: '', gmail_app_password: '' };
+  if (!rows[0]) return { provider: 'gmail_api', from: '', notify_emails: [], gmail_user: '', gmail_app_password: '' };
   return JSON.parse(rows[0].value);
+}
+
+// ── Gmail API（OAuth2）でメール送信 ──────────────────────────
+async function sendViaGmailApi({ to, subject, html }) {
+  const clientId     = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+  const senderAddr   = process.env.GMAIL_SENDER_ADDRESS;
+
+  if (!clientId || !clientSecret || !refreshToken || !senderAddr) {
+    console.log('[GmailAPI] 環境変数が未設定 — スキップ');
+    return { skipped: true, reason: 'env_not_set' };
+  }
+
+  const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret);
+  oAuth2Client.setCredentials({ refresh_token: refreshToken });
+
+  const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+
+  const toList = (Array.isArray(to) ? to : [to]).filter(Boolean);
+  if (!toList.length) return { skipped: true, reason: 'no_recipients' };
+
+  // RFC 2822 形式のメッセージを base64url エンコード
+  const boundary = `boundary_${Date.now()}`;
+  const mime = [
+    `From: "納品スケジューラー" <${senderAddr}>`,
+    `To: ${toList.join(', ')}`,
+    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/plain; charset=UTF-8`,
+    ``,
+    subject, // プレーンテキスト代替（簡易）
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/html; charset=UTF-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    Buffer.from(html).toString('base64'),
+    ``,
+    `--${boundary}--`,
+  ].join('\r\n');
+
+  const encoded = Buffer.from(mime)
+    .toString('base64')
+    .replace(/[+]/g, '-').replace(/[/]/g, '_').replace(/=+$/, '');
+
+  try {
+    await gmail.users.messages.send({ userId: 'me', requestBody: { raw: encoded } });
+    console.log('[GmailAPI sent]', subject, '->', toList.join(', '));
+    return { success: true };
+  } catch (e) {
+    console.error('[GmailAPI error]', e.message);
+    return { error: e.message };
+  }
 }
 
 // ── Email templates ───────────────────────────────────────────
@@ -149,7 +207,7 @@ async function sendTemplatedEmail(templateKey, to, vars) {
   return sendEmail({ to, subject, html });
 }
 
-function createGmailTransport(user, pass) {
+function createGmailSmtpTransport(user, pass) {
   return nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
 }
 
@@ -157,22 +215,45 @@ async function sendEmail({ to, subject, html }) {
   const settings = await getEmailSettings();
   const toList = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!toList.length) { console.log('[Email skipped - no recipients]', subject); return { skipped: true }; }
-  const provider = settings.provider || 'gmail';
-  if (provider === 'gmail') {
-    const { gmail_user, gmail_app_password } = settings;
-    if (!gmail_user || !gmail_app_password) { console.log('[Email skipped - Gmail not configured]'); return { skipped: true }; }
-    try {
-      await createGmailTransport(gmail_user, gmail_app_password).sendMail({ from: `"納品スケジューラー" <${gmail_user}>`, to: toList, subject, html });
-      console.log('[Gmail sent]', subject); return { success: true };
-    } catch (e) { console.error('[Gmail error]', e.message); return { error: e.message }; }
+
+  const provider = settings.provider || 'gmail_api';
+
+  // ① Gmail API（OAuth2）- 最優先・Render無料枠でもポートブロックなし
+  if (provider === 'gmail_api') {
+    const result = await sendViaGmailApi({ to: toList, subject, html });
+    if (result.success) return result;
+    if (result.skipped && result.reason === 'env_not_set') {
+      console.log('[GmailAPI] 環境変数未設定のためSMTPフォールバック試行');
+    } else if (result.error) {
+      console.error('[GmailAPI failed]', result.error);
+      return result; // API設定済みだがエラー → 呼び出し元に通知
+    }
   }
+
+  // ② Gmail SMTP（有料プランまたはローカル開発用）
+  if (provider === 'gmail_smtp') {
+    const { gmail_user, gmail_app_password } = settings;
+    if (!gmail_user || !gmail_app_password) { console.log('[SMTP skipped - not configured]'); return { skipped: true }; }
+    try {
+      await createGmailSmtpTransport(gmail_user, gmail_app_password).sendMail({
+        from: `"納品スケジューラー" <${gmail_user}>`, to: toList, subject, html,
+      });
+      console.log('[SMTP sent]', subject); return { success: true };
+    } catch (e) { console.error('[SMTP error]', e.message); return { error: e.message }; }
+  }
+
+  // ③ Resend API（独自ドメイン必要）
   if (provider === 'resend') {
     const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-    if (!resend) { console.log('[Resend skipped]'); return { skipped: true }; }
+    if (!resend) { console.log('[Resend skipped - no key]'); return { skipped: true }; }
     const from = settings.from || '納品スケジューラー <onboarding@resend.dev>';
-    try { return await resend.emails.send({ from, to: toList, subject, html }); }
-    catch (e) { console.error('[Resend error]', e.message); return { error: e.message }; }
+    try {
+      const r = await resend.emails.send({ from, to: toList, subject, html });
+      console.log('[Resend sent]', subject); return r;
+    } catch (e) { console.error('[Resend error]', e.message); return { error: e.message }; }
   }
+
+  console.log('[Email skipped - unknown provider]', provider);
   return { skipped: true };
 }
 
@@ -516,13 +597,14 @@ app.put('/api/settings/email', async (req, res) => {
 app.post('/api/settings/email/test', async (req, res) => {
   const settings = await getEmailSettings();
   if (!settings.notify_emails?.length) return res.status(400).json({ error: '通知先メールアドレスが登録されていません' });
+  const providerLabel = { gmail_api: 'Gmail API (OAuth2)', gmail_smtp: 'Gmail SMTP', resend: 'Resend' }[settings.provider] || settings.provider;
   const result = await sendEmail({
     to: settings.notify_emails,
     subject: '【テスト】納品スケジューラー メール設定確認',
-    html: textToHtml('メール設定テスト ✅', `プロバイダー：${settings.provider === 'resend' ? 'Resend' : 'Gmail SMTP'}\n送信先：${settings.notify_emails.join(', ')}\n\nこのメールはテスト送信です。`),
+    html: textToHtml('メール設定テスト ✅', `送信方式：${providerLabel}\n送信先：${settings.notify_emails.join(', ')}\n\nこのメールはテスト送信です。正常に届いていれば設定は完了です。`),
   });
   if (result?.error) return res.status(500).json({ error: result.error });
-  if (result?.skipped) return res.status(400).json({ error: 'メール設定が未完了です' });
+  if (result?.skipped) return res.status(400).json({ error: 'メール設定が未完了です（環境変数を確認してください）' });
   res.json({ success: true });
 });
 app.get('/api/settings/email-templates', async (_req, res) => { res.json(await getEmailTemplates()); });
