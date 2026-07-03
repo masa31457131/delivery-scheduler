@@ -304,7 +304,7 @@ async function initDB() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id           TEXT PRIMARY KEY,
-        name         TEXT NOT NULL UNIQUE,
+        name         TEXT NOT NULL,
         role         TEXT NOT NULL DEFAULT 'sales',
         password     TEXT NOT NULL,
         email        TEXT DEFAULT '',
@@ -355,6 +355,9 @@ async function initDB() {
 
     // Migrations
     await client.query(`ALTER TABLE projects ALTER COLUMN project_name DROP NOT NULL`).catch(() => {});
+    // name カラムの UNIQUE 制約を削除（login_id で一意管理するため）
+    await client.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_name_key`).catch(() => {});
+    await client.query(`ALTER TABLE users ALTER COLUMN name DROP NOT NULL`).catch(() => {});
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS delivery_method TEXT DEFAULT 'remote'`);
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_type TEXT DEFAULT '新規納品'`);
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS candidate_days INTEGER DEFAULT 1`);
