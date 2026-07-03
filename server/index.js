@@ -39,36 +39,50 @@ async function sendViaGmailApi({ to, subject, html }) {
 
   const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret);
   oAuth2Client.setCredentials({ refresh_token: refreshToken });
-
   const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
   const toList = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!toList.length) return { skipped: true, reason: 'no_recipients' };
 
-  // RFC 2822 形式のメッセージを base64url エンコード
+  // 日本語文字列を RFC 2047 encoded-word に変換
+  const encodeHeader = (str) => `=?UTF-8?B?${Buffer.from(str, 'utf8').toString('base64')}?=`;
+
+  // base64 を RFC 2822 準拠の76文字改行付きに整形
+  const foldBase64 = (b64) => b64.match(/.{1,76}/g).join('\r\n');
+
   const boundary = `boundary_${Date.now()}`;
+  const plainText = subject; // プレーンテキスト代替
+  const htmlBase64  = foldBase64(Buffer.from(html, 'utf8').toString('base64'));
+  const plainBase64 = foldBase64(Buffer.from(plainText, 'utf8').toString('base64'));
+
+  // 差出人名を RFC 2047 でエンコード（文字化け対策）
+  const fromHeader = `From: ${encodeHeader('納品スケジューラー')} <${senderAddr}>`;
+  const subjectHeader = `Subject: ${encodeHeader(subject)}`;
+
   const mime = [
-    `From: "納品スケジューラー" <${senderAddr}>`,
+    fromHeader,
     `To: ${toList.join(', ')}`,
-    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+    subjectHeader,
     `MIME-Version: 1.0`,
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
     ``,
     `--${boundary}`,
     `Content-Type: text/plain; charset=UTF-8`,
+    `Content-Transfer-Encoding: base64`,
     ``,
-    subject, // プレーンテキスト代替（簡易）
+    plainBase64,
     ``,
     `--${boundary}`,
     `Content-Type: text/html; charset=UTF-8`,
     `Content-Transfer-Encoding: base64`,
     ``,
-    Buffer.from(html).toString('base64'),
+    htmlBase64,
     ``,
     `--${boundary}--`,
   ].join('\r\n');
 
-  const encoded = Buffer.from(mime)
+  // base64url エンコード（RFC 4648）
+  const encoded = Buffer.from(mime, 'utf8')
     .toString('base64')
     .replace(/[+]/g, '-').replace(/[/]/g, '_').replace(/=+$/, '');
 
