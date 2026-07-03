@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { useToast, ToastContainer } from './hooks/useToast';
 import LoginPage from './pages/LoginPage';
@@ -13,13 +13,79 @@ const IconPlus     = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentC
 const IconCalendar = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>;
 const IconUsers    = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2"/><path d="M16 3.13a4 4 0 010 7.75"/><path d="M21 21v-2a4 4 0 00-3-3.87"/></svg>;
 
+// ── スプラッシュ（起動準備中）────────────────────────────────
+function SplashScreen() {
+  const [dots, setDots] = useState('');
+  useEffect(() => {
+    const t = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 600);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: 24,
+      background: 'var(--navy, #0f1623)',
+    }}>
+      <div style={{ fontSize: '3rem' }}>📦</div>
+      <div style={{ fontWeight: 700, fontSize: '1.25rem', color: '#fff', letterSpacing: '0.02em' }}>
+        納品スケジューラー
+      </div>
+      {/* スピナー */}
+      <div style={{
+        width: 36, height: 36, borderRadius: '50%',
+        border: '3px solid rgba(59,130,246,0.2)',
+        borderTopColor: '#3b82f6',
+        animation: 'spin 0.9s linear infinite',
+      }} />
+      <div style={{ fontSize: '0.88rem', color: 'rgba(255,255,255,0.5)' }}>
+        🚀 起動準備中{dots}
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+// ── サーバー疎通確認 ─────────────────────────────────────────
+async function pingServer(retries = 60, intervalMs = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch('/api/stats', { signal: AbortSignal.timeout(3000) });
+      if (res.ok) return true;
+    } catch { /* サーバー未起動 */ }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
 function AppInner() {
   const { user, logout } = useAuth();
   const { toasts, addToast } = useToast();
-  // ログイン後は必ずダッシュボード（ホーム）から始まる
   const [page, setPage] = useState('dashboard');
   const [detailId, setDetailId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [serverReady, setServerReady] = useState(null); // null=確認中, true=OK, false=失敗
+
+  // 起動時にサーバーが応答するまでスプラッシュを表示
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // まず即時試行、応答があればすぐ表示
+      try {
+        const res = await fetch('/api/stats', { signal: AbortSignal.timeout(2000) });
+        if (!cancelled && res.ok) { setServerReady(true); return; }
+      } catch { /* スリープ中 */ }
+      // スリープ中 → スプラッシュを出してリトライ
+      if (!cancelled) setServerReady(false);
+      const ok = await pingServer();
+      if (!cancelled) setServerReady(ok ? true : false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 初回確認中（null）はごく短時間なので空表示
+  if (serverReady === null) return null;
+  // サーバー未応答 → スプラッシュ継続
+  if (serverReady === false) return <SplashScreen />;
 
   if (!user) return <LoginPage />;
 
