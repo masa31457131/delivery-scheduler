@@ -143,6 +143,11 @@ function ProjectCard({ project, onNavigate }) {
         <div>
           <div className="project-name">{project.project_type || '—'}</div>
           <div className="client-name">{project.client_name}</div>
+          {project.case_id && (
+            <div style={{ fontSize: '0.68rem', color: 'var(--text-sub)', fontFamily: 'monospace', marginTop: 2 }}>
+              🆔 {project.case_id}
+            </div>
+          )}
         </div>
         <StatusBadge status={project.status} />
       </div>

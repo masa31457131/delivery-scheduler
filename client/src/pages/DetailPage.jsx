@@ -377,6 +377,14 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
 
       {/* メタ情報 */}
       <div className="detail-meta">
+        {project.case_id && (
+          <div className="meta-item" style={{ gridColumn: '1 / -1' }}>
+            <div className="meta-label">案件ID</div>
+            <div className="meta-value" style={{ fontFamily: 'monospace', letterSpacing: '0.04em' }}>
+              {project.case_id}
+            </div>
+          </div>
+        )}
         <div className="meta-item"><div className="meta-label">担当営業</div><div className="meta-value">{project.sales_rep}</div></div>
         <div className="meta-item"><div className="meta-label">納品方法</div><div className="meta-value">{DELIVERY_LABELS[project.delivery_method]||'—'}</div></div>
         <div className="meta-item"><div className="meta-label">ステータス</div><div className="meta-value">{STATUS_MAP[project.status]?.label??project.status}</div></div>

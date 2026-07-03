@@ -696,13 +696,13 @@ const TEMPLATE_LABELS = {
   auto_cancelled:      { label: '⏰ 自動キャンセル通知', desc: '10営業日経過で自動キャンセルされたとき' },
 };
 const AVAILABLE_VARS = {
-  schedule_proposed:   ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'candidate_days', 'memo'],
-  candidates_set:      ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'cs_members', 'candidate_list'],
-  schedule_confirmed:  ['project_type', 'client_name', 'sales_rep', 'delivery_method', 'cs_members', 'confirmed_date', 'shortage_reason_line'],
-  schedule_cancelled:  ['project_type', 'client_name', 'sales_rep', 'confirmed_date', 'cancel_reason'],
-  reminder:            ['project_type', 'client_name', 'sales_rep', 'candidate_days', 'created_at'],
-  auto_cancel_warning: ['project_type', 'client_name', 'sales_rep', 'deadline_date'],
-  auto_cancelled:      ['project_type', 'client_name', 'sales_rep'],
+  schedule_proposed:   ['case_id', 'project_type', 'client_name', 'sales_rep', 'delivery_method', 'candidate_days', 'memo'],
+  candidates_set:      ['case_id', 'project_type', 'client_name', 'sales_rep', 'delivery_method', 'cs_members', 'candidate_list'],
+  schedule_confirmed:  ['case_id', 'project_type', 'client_name', 'sales_rep', 'delivery_method', 'cs_members', 'confirmed_date', 'shortage_reason_line'],
+  schedule_cancelled:  ['case_id', 'project_type', 'client_name', 'sales_rep', 'confirmed_date', 'cancel_reason'],
+  reminder:            ['case_id', 'project_type', 'client_name', 'sales_rep', 'candidate_days', 'created_at'],
+  auto_cancel_warning: ['case_id', 'project_type', 'client_name', 'sales_rep', 'deadline_date'],
+  auto_cancelled:      ['case_id', 'project_type', 'client_name', 'sales_rep'],
 };
 
 function TemplatesTab({ addToast }) {
