@@ -432,8 +432,8 @@ app.post('/api/users', async (req, res) => {
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
-  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
-    [id, display_name, login_id, 'sales', password, email || '', area || '東京']);
+  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [id, display_name, display_name, login_id, 'sales', password, email || '', area || '東京']);
   res.status(201).json({ id, display_name, login_id, role: 'sales', email: email || '', area: area || '東京' });
 });
 app.put('/api/users/:id', async (req, res) => {
@@ -468,8 +468,8 @@ app.post('/api/admins', async (req, res) => {
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
-  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
-    [id, display_name, login_id, 'admin', password, email || '', area || '東京']);
+  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [id, display_name, display_name, login_id, 'admin', password, email || '', area || '東京']);
   res.status(201).json({ id, display_name, login_id, role: 'admin', email: email || '', area: area || '東京' });
 });
 app.put('/api/admins/:id', async (req, res) => {
@@ -506,8 +506,8 @@ app.post('/api/cs-members', async (req, res) => {
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
-  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$2,$3,$4,$5,$6,$7)',
-    [id, display_name, login_id, 'cs', password, email || '', area || '東京']);
+  await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [id, display_name, display_name, login_id, 'cs', password, email || '', area || '東京']);
   res.status(201).json({ id, display_name, login_id, role: 'cs', email: email || '', area: area || '東京' });
 });
 app.put('/api/cs-members/:id', async (req, res) => {
