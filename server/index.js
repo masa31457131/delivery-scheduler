@@ -106,6 +106,7 @@ const DEFAULT_TEMPLATES = {
 顧客名：{{client_name}}
 担当営業：{{sales_rep}}
 納品方法：{{delivery_method}}
+案件ID：{{case_id}}
 希望候補日数：{{candidate_days}}日
 備考：{{memo}}
 
@@ -119,6 +120,7 @@ const DEFAULT_TEMPLATES = {
 顧客名：{{client_name}}
 担当営業：{{sales_rep}}
 納品方法：{{delivery_method}}
+案件ID：{{case_id}}
 CS担当者：{{cs_members}}
 
 ▼候補日一覧
@@ -133,6 +135,7 @@ CS担当者：{{cs_members}}
 案件内容：{{project_type}}
 顧客名：{{client_name}}
 担当営業：{{sales_rep}}
+案件ID：{{case_id}}
 CS担当者：{{cs_members}}
 納品方法：{{delivery_method}}
 確定日時：{{confirmed_date}}
@@ -146,6 +149,7 @@ CS担当者：{{cs_members}}
 
 案件内容：{{project_type}}
 顧客名：{{client_name}}
+案件ID：{{case_id}}
 担当営業：{{sales_rep}}
 確定日：{{confirmed_date}}
 キャンセル理由：{{cancel_reason}}
@@ -158,6 +162,7 @@ CS担当者：{{cs_members}}
 
 案件内容：{{project_type}}
 顧客名：{{client_name}}
+案件ID：{{case_id}}
 担当営業：{{sales_rep}}
 希望候補日数：{{candidate_days}}日
 依頼日：{{created_at}}
@@ -288,14 +293,35 @@ async function getCsEmails(csMemberNames) {
 }
 
 // 管理者通知アドレス + 担当営業 + CS部員 を合算
+// 担当営業のエリアを取得
+async function getSalesArea(displayName) {
+  const { rows } = await pool.query("SELECT area FROM users WHERE display_name=$1 AND role='sales'", [displayName]);
+  return rows[0]?.area || null;
+}
+
+// エリアに対応する管理者のメールアドレスを取得
+async function getAdminEmailsByArea(area) {
+  if (!area) {
+    // エリア不明の場合は全管理者
+    const { rows } = await pool.query("SELECT email FROM users WHERE role='admin' AND email != ''");
+    return rows.map(r => r.email).filter(Boolean);
+  }
+  const { rows } = await pool.query("SELECT email FROM users WHERE role='admin' AND area=$1 AND email != ''", [area]);
+  return rows.map(r => r.email).filter(Boolean);
+}
+
 async function buildRecipients(salesDisplayName, csMemberNames) {
   const settings = await getEmailSettings();
   const salesEmail = await getSalesEmail(salesDisplayName);
   const csEmails = await getCsEmails(csMemberNames || []);
+  // 担当営業のエリアに対応する管理者メールを取得
+  const salesArea = await getSalesArea(salesDisplayName);
+  const adminEmails = await getAdminEmailsByArea(salesArea);
   return [...new Set([
-    ...(settings.notify_emails || []),
-    ...(salesEmail ? [salesEmail] : []),
-    ...csEmails,
+    ...(settings.notify_emails || []),  // 管理者通知アドレス（設定画面）
+    ...adminEmails,                      // エリア別管理者のメールアドレス
+    ...(salesEmail ? [salesEmail] : []), // 担当営業
+    ...csEmails,                         // CS部員
   ])].filter(Boolean);
 }
 
@@ -310,6 +336,18 @@ function addBusinessDays(date, days) {
   return d;
 }
 const DELIVERY_LABEL = (m) => m === 'onsite' ? '🚗 現地訪問' : '🖥 リモート';
+
+// 案件ID採番：DS-YYYYMM-NNNN（月ごと連番）
+async function generateCaseId() {
+  const now = new Date();
+  const prefix = 'DS-' + now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0');
+  const { rows } = await pool.query(
+    "SELECT COUNT(*) as cnt FROM projects WHERE case_id LIKE $1",
+    [prefix + '%']
+  );
+  const seq = (parseInt(rows[0].cnt) + 1).toString().padStart(4, '0');
+  return `${prefix}-${seq}`;
+}
 
 // ── DB Init ───────────────────────────────────────────────────
 async function initDB() {
@@ -328,6 +366,7 @@ async function initDB() {
       );
       CREATE TABLE IF NOT EXISTS projects (
         id              TEXT PRIMARY KEY,
+        case_id         TEXT,
         client_name     TEXT NOT NULL,
         project_type    TEXT NOT NULL DEFAULT '新規納品',
         sales_rep       TEXT NOT NULL,
@@ -389,6 +428,14 @@ async function initDB() {
     await client.query(`ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS area TEXT NOT NULL DEFAULT '東京'`);
     await client.query(`ALTER TABLE schedule_candidates ADD COLUMN IF NOT EXISTS candidate_date_to TEXT DEFAULT ''`);
     await client.query(`ALTER TABLE schedule_candidates ADD COLUMN IF NOT EXISTS cs_members TEXT DEFAULT '[]'`);
+    await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS case_id TEXT`);
+    // 既存の case_id が NULL のプロジェクトに連番IDを付与（後方互換）
+    await client.query(`
+      UPDATE projects SET case_id = 'DS-' ||
+        TO_CHAR(created_at, 'YYYYMM') || '-' ||
+        LPAD(ROW_NUMBER() OVER (PARTITION BY TO_CHAR(created_at,'YYYYMM') ORDER BY created_at)::TEXT, 4, '0')
+      WHERE case_id IS NULL OR case_id = ''
+    `).catch(() => {});
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
     if (parseInt(rows[0].c) === 0) {
@@ -660,9 +707,10 @@ app.post('/api/projects', async (req, res) => {
   if (!client_name || !project_type || !sales_rep) return res.status(400).json({ error: '必須項目が不足しています' });
   if (memo && memo.length > 50) return res.status(400).json({ error: '備考は50文字以内で入力してください' });
   const id = uuidv4();
+  const case_id = await generateCaseId();
   await pool.query(
-    `INSERT INTO projects (id,client_name,project_type,sales_rep,memo,delivery_method,candidate_days,status,cs_members) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending','[]')`,
-    [id, client_name, project_type, sales_rep, memo || '', delivery_method || 'remote', candidate_days || 1]
+    `INSERT INTO projects (id,case_id,client_name,project_type,sales_rep,memo,delivery_method,candidate_days,status,cs_members) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending','[]')`,
+    [id, case_id, client_name, project_type, sales_rep, memo || '', delivery_method || 'remote', candidate_days || 1]
   );
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [id]);
   const project = { ...parseProject(rows[0]), candidates: [] };
@@ -670,7 +718,7 @@ app.post('/api/projects', async (req, res) => {
   const allTo = await buildRecipients(sales_rep, []);
   if (allTo.length) {
     const result = await sendTemplatedEmail('schedule_proposed', allTo, {
-      project_type, client_name, sales_rep,
+      case_id: project.case_id || '', project_type, client_name, sales_rep,
       delivery_method: DELIVERY_LABEL(delivery_method),
       candidate_days: candidate_days || 1, memo: memo || 'なし',
     });
@@ -771,7 +819,7 @@ app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
     }).join('\n');
     const csDisplay = allCsNames.length ? allCsNames.join('、') : 'なし';
     await sendTemplatedEmail('candidates_set', allTo, {
-      project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+      case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
       delivery_method: DELIVERY_LABEL(p.delivery_method),
       cs_members: csDisplay,
       candidate_list: dateLines,
@@ -805,7 +853,7 @@ app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
   if (allTo.length) {
     const shortageReasonLine = shortage_reason?.trim() ? `不足理由：${shortage_reason.trim()}` : '';
     await sendTemplatedEmail('schedule_confirmed', allTo, {
-      project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+      case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
       delivery_method: DELIVERY_LABEL(p.delivery_method),
       cs_members: csMembersArr.length ? csMembersArr.join('、') : 'なし',
       confirmed_date: fullDate, shortage_reason_line: shortageReasonLine,
@@ -827,7 +875,7 @@ app.post('/api/projects/:id/cancel', async (req, res) => {
   const allTo = await buildRecipients(p.sales_rep, p.cs_members);
   if (allTo.length) {
     await sendTemplatedEmail('schedule_cancelled', allTo, {
-      project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+      case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
       confirmed_date: p.confirmed_date || '未確定', cancel_reason: reason.trim(),
     });
   }
@@ -852,7 +900,7 @@ app.post('/api/projects/:id/remind', async (req, res) => {
   ])].filter(Boolean);
   if (!allTo.length) return res.status(400).json({ error: '送信先メールアドレスが登録されていません。管理者設定でメールアドレスを登録してください。' });
   const result = await sendTemplatedEmail('reminder', allTo, {
-    project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+    case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
     candidate_days: p.candidate_days || 1,
     created_at: p.created_at ? new Date(p.created_at).toLocaleDateString('ja-JP') : '—',
   });
@@ -876,10 +924,10 @@ async function runAutoCancel() {
         await pool.query(`UPDATE projects SET status='cancelled', cancel_reason='未確定のため（自動キャンセル）', updated_at=NOW() WHERE id=$1`, [p.id]);
         await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [p.id]);
         const allTo = await buildRecipients(p.sales_rep, p.cs_members);
-        if (allTo.length) await sendTemplatedEmail('auto_cancelled', allTo, { project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep });
+        if (allTo.length) await sendTemplatedEmail('auto_cancelled', allTo, { case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep });
       } else if (todayStr === warningStr) {
         const allTo = await buildRecipients(p.sales_rep, p.cs_members);
-        if (allTo.length) await sendTemplatedEmail('auto_cancel_warning', allTo, { project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep, deadline_date: deadlineStr });
+        if (allTo.length) await sendTemplatedEmail('auto_cancel_warning', allTo, { case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep, deadline_date: deadlineStr });
       }
     }
   } catch (e) { console.error('[AutoCancel error]', e.message); }
