@@ -26,10 +26,10 @@ export default function LoginPage() {
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{ fontSize: '2rem', marginBottom: 8 }}>📦</div>
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{ fontSize: '2.4rem', marginBottom: 10 }}>📦</div>
           <div className="login-title">納品スケジューラー</div>
-          <div className="login-sub">営業・管理者でログイン</div>
+          <div className="login-sub">ログインIDとパスワードを入力してください</div>
         </div>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -37,9 +37,10 @@ export default function LoginPage() {
             <input
               value={loginId}
               onChange={e => setLoginId(e.target.value)}
-              placeholder="例: yamada"
+              placeholder="ログインIDを入力"
               required
               autoComplete="username"
+              autoCapitalize="off"
             />
           </div>
           <div className="form-group">
@@ -54,7 +55,7 @@ export default function LoginPage() {
             />
           </div>
           {error && (
-            <div style={{ color: 'var(--danger)', fontSize: '0.82rem', marginBottom: 12 }}>
+            <div style={{ color: 'var(--danger)', fontSize: '0.82rem', marginBottom: 12, padding: '8px 12px', background: 'rgba(239,68,68,0.08)', borderRadius: 8 }}>
               {error}
             </div>
           )}
@@ -62,13 +63,6 @@ export default function LoginPage() {
             {loading ? 'ログイン中...' : 'ログイン'}
           </button>
         </form>
-        <hr className="divider" />
-        <div className="text-sub" style={{ fontSize: '0.75rem', lineHeight: 1.6 }}>
-          <div style={{ marginBottom: 4, fontWeight: 600 }}>初期アカウント</div>
-          <div>管理者：admin / admin123</div>
-          <div>山田 太郎：yamada / sales123</div>
-          <div>田中 一郎：tanaka / sales456</div>
-        </div>
       </div>
     </div>
   );

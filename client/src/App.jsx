@@ -16,6 +16,7 @@ const IconUsers    = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentC
 function AppInner() {
   const { user, logout } = useAuth();
   const { toasts, addToast } = useToast();
+  // ログイン後は必ずダッシュボード（ホーム）から始まる
   const [page, setPage] = useState('dashboard');
   const [detailId, setDetailId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -43,8 +44,10 @@ function AppInner() {
       <header className="topbar">
         <div className="topbar-logo"><span className="dot" />納品スケジューラー</div>
         <div className="topbar-right">
-          <span>{user.name}</span>
-          <button className="btn btn-ghost btn-sm" onClick={logout} style={{ padding: '4px 10px' }}>ログアウト</button>
+          <span style={{ fontSize: '0.82rem' }}>{user.name}</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => { logout(); setPage('dashboard'); }} style={{ padding: '4px 10px' }}>
+            ログアウト
+          </button>
         </div>
       </header>
 

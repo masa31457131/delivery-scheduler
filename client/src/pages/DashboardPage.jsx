@@ -10,7 +10,6 @@ const STATUS_FILTERS = [
   { key: 'pending',   label: '候補日待ち' },
   { key: 'scheduled', label: '仮スケ設定済' },
   { key: 'confirmed', label: '確定済み' },
-  { key: 'delivered', label: '納品済み' },
   { key: 'cancelled', label: 'キャンセル' },
 ];
 
