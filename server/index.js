@@ -422,6 +422,8 @@ async function initDB() {
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`);
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS login_id TEXT`);
     await client.query(`UPDATE users SET display_name = name WHERE display_name IS NULL`);
+    await client.query(`UPDATE users SET display_name = login_id WHERE display_name IS NULL OR display_name = ''`).catch(() => {});
+    await client.query(`UPDATE users SET name = display_name WHERE name IS NULL OR name = ''`).catch(() => {});
     await client.query(`UPDATE users SET login_id = name WHERE login_id IS NULL`);
     await client.query(`ALTER TABLE users ADD CONSTRAINT users_login_id_unique UNIQUE (login_id)`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS area TEXT DEFAULT '東京'`);
@@ -470,7 +472,8 @@ app.post('/api/auth/login', async (req, res) => {
   );
   if (!rows[0]) return res.status(401).json({ error: 'ログインIDまたはパスワードが違います' });
   const u = rows[0];
-  res.json({ id: u.id, name: u.display_name || u.name, login_id: u.login_id, role: u.role, area: u.area || '東京' });
+  const displayName = u.display_name || u.name || u.login_id || 'ユーザー';
+  res.json({ id: u.id, name: displayName, login_id: u.login_id, role: u.role, area: u.area || '東京' });
 });
 
 // ── ユーザー共通ヘルパー ──────────────────────────────────────
@@ -704,7 +707,10 @@ app.get('/api/projects/:id', async (req, res) => {
 // 新規登録
 app.post('/api/projects', async (req, res) => {
   const { client_name, project_type, sales_rep, memo, delivery_method, candidate_days } = req.body;
-  if (!client_name || !project_type || !sales_rep) return res.status(400).json({ error: '必須項目が不足しています' });
+  if (!client_name?.trim() || !project_type?.trim() || !sales_rep?.trim()) {
+    console.error('[POST /projects] 必須項目不足:', { client_name, project_type, sales_rep });
+    return res.status(400).json({ error: '必須項目が不足しています' });
+  }
   if (memo && memo.length > 50) return res.status(400).json({ error: '備考は50文字以内で入力してください' });
   const id = uuidv4();
   const case_id = await generateCaseId();
