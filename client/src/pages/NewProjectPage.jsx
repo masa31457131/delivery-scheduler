@@ -28,9 +28,15 @@ export default function NewProjectPage({ onSaved, addToast }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.project_type) { addToast('案件内容を選択してください', 'error'); return; }
+    if (!form.client_name?.trim()) { addToast('顧客名を入力してください', 'error'); return; }
+    // sales_rep は営業ロールの場合 user.name を確実にセット（空文字対策）
+    const sales_rep = (user.role === 'sales' || user.role === 'cs')
+      ? user.name
+      : form.sales_rep;
+    if (!sales_rep?.trim()) { addToast('担当営業を選択してください', 'error'); return; }
     setLoading(true);
     try {
-      await api.createProject({ ...form, candidates: [] });
+      await api.createProject({ ...form, sales_rep, candidates: [] });
       addToast('案件を登録しました');
       onSaved();
     } catch (err) {
