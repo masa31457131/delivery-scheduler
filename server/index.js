@@ -136,9 +136,9 @@ CS担当者：{{cs_members}}
 顧客名：{{client_name}}
 担当営業：{{sales_rep}}
 案件ID：{{case_id}}
-CS担当者：{{cs_members}}
-納品方法：{{delivery_method}}
 確定日時：{{confirmed_date}}
+この日程のCS担当者：{{cs_members}}
+納品方法：{{delivery_method}}
 {{shortage_reason_line}}
 
 日程が確定しました。準備をお願いします。`
