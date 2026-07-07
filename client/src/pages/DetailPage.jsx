@@ -185,15 +185,12 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const doFinalize = async (reason) => {
     setBusy(true);
     try {
-      // shortage_reason と cs_members を一緒に保存してから finalize
-      const patch = {};
-      if (reason) patch.shortage_reason = reason;
-      if (selectedCs.length > 0) patch.cs_members = selectedCs;
-      if (Object.keys(patch).length > 0) {
-        await api.updateProject(projectId, patch);
+      // shortage_reason を保存（cs_membersは各候補日の設定がfinalize時にサーバー側で自動集約される）
+      if (reason) {
+        await api.updateProject(projectId, { shortage_reason: reason });
       }
       const updated = await api.finalizeCandidates(projectId);
-      setProject({ ...updated, shortage_reason: reason || updated.shortage_reason, cs_members: selectedCs.length ? selectedCs : updated.cs_members });
+      setProject(updated);
       setShowFinalizeModal(false);
       setShortageReason('');
       addToast('候補日の設定が完了し、通知メールを送信しました');
