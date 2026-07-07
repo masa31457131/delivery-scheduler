@@ -807,12 +807,17 @@ app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
   // 候補日不足の場合も shortage_reason が入力済みであれば完了できる（フロントで事前に保存）
 
   await pool.query("UPDATE projects SET status='scheduled', updated_at=NOW() WHERE id=$1", [req.params.id]);
-  const { rows: updatedProject } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
 
   // 全候補日の CS 部員を合算（重複除去）
   const allCsNames = [...new Set(cands.flatMap(c => {
     try { return JSON.parse(c.cs_members || '[]'); } catch { return []; }
   }))];
+
+  // 合算したCS部員を案件レベルにも保存（確定時に引き継ぐため）
+  await pool.query('UPDATE projects SET cs_members=$1 WHERE id=$2', [JSON.stringify(allCsNames), req.params.id]);
+
+  const { rows: updatedProject } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
+
   const allTo = await buildRecipients(p.sales_rep, allCsNames);
   if (allTo.length) {
     const dateLines = cands.map(c => {
