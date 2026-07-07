@@ -50,7 +50,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     return u?.area || '東京';
   })();
 
-  // 営業用：CS選択なしで直接確定
+  // 営業用：CS選択なしで直接確定（確定した候補日固有のCS担当者を引き継ぐ）
   const handleConfirmDirect = async (candidate) => {
     const dateStr = formatCandDate(candidate);
     if (!confirm(`「${dateStr}」でスケジュールを確定しますか？`)) return;
@@ -59,7 +59,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       const updated = await api.confirmSchedule(projectId, {
         confirmed_date: candidate.candidate_date,
         confirmed_time: candidate.candidate_time,
-        cs_members: project.cs_members || [],   // 管理者が設定済みのCS部員を引き継ぐ
+        cs_members: candidate.cs_members || [],   // ★ その候補日固有のCS担当者のみを引き継ぐ
         shortage_reason: project.shortage_reason || '',
       });
       setProject(updated);
@@ -69,10 +69,10 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     finally { setBusy(false); }
   };
 
-  // 管理者用：CS選択モーダルを開く
+  // 管理者用：CS選択モーダルを開く（その候補日固有のCS担当者を初期表示）
   const openConfirmModal = (candidate) => {
     setConfirmTarget(candidate);
-    setSelectedCs(project.cs_members || []);
+    setSelectedCs(candidate.cs_members || []);
     setShortageReason('');
     setShowConfirmModal(true);
   };
@@ -263,11 +263,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
               </div>
             </div>
 
-            {/* CS部員の確認表示（設定完了時に選択済み） */}
-            {(project.cs_members || []).length > 0 && (
+            {/* CS部員の確認表示（この候補日に設定済みのCS担当者） */}
+            {(confirmTarget.cs_members || []).length > 0 && (
               <div style={{ padding:'8px 12px',background:'rgba(59,130,246,0.07)',border:'1px solid rgba(59,130,246,0.2)',borderRadius:8,marginBottom:16,fontSize:'0.82rem' }}>
-                <div style={{ fontSize:'0.7rem',color:'var(--text-sub)',marginBottom:4 }}>CS担当者（設定済み）</div>
-                {(project.cs_members || []).map(name => (
+                <div style={{ fontSize:'0.7rem',color:'var(--text-sub)',marginBottom:4 }}>この日程のCS担当者</div>
+                {(confirmTarget.cs_members || []).map(name => (
                   <div key={name} style={{ color:'var(--accent-lt)' }}>✓ {name}</div>
                 ))}
               </div>
