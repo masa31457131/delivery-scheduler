@@ -13,8 +13,9 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [salesUsers, setSalesUsers] = useState([]);
   const [csMembers, setCsMembers] = useState([]);
 
-  // 候補日追加フォーム
+  // 候補日追加・編集フォーム
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingCandidateId, setEditingCandidateId] = useState(null); // null=新規追加, id=編集中
   const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '', cs_members: [] });
   const [conflicts, setConflicts] = useState(null);
 
@@ -135,21 +136,53 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     setConflicts(result);
   };
 
+  // 候補日の編集を開始（フォームに既存の値をセット）
+  const handleEditCandidateStart = (candidate) => {
+    setEditingCandidateId(candidate.id);
+    setNewCandidate({
+      date: candidate.candidate_date,
+      date_to: candidate.candidate_date_to || '',
+      time: candidate.candidate_time || '',
+      cs_members: candidate.cs_members || [],
+    });
+    setConflicts(null);
+    setShowAddForm(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingCandidateId(null);
+    setNewCandidate({ date: '', date_to: '', time: '', cs_members: [] });
+    setConflicts(null);
+    setShowAddForm(false);
+  };
+
   const handleAddCandidate = async (e) => {
     e.preventDefault();
     if (conflicts?.blocked || conflicts?.sales_reps?.length >= 2) { addToast('この日程は登録できません', 'error'); return; }
-    const maxDays = project.candidate_days || 1;
-    if ((project.candidates?.length || 0) >= maxDays) {
-      addToast(`希望候補日数（${maxDays}日）を超えて登録することはできません`, 'error'); return;
+
+    // 編集モードでなければ希望日数の上限チェック
+    if (!editingCandidateId) {
+      const maxDays = project.candidate_days || 1;
+      if ((project.candidates?.length || 0) >= maxDays) {
+        addToast(`希望候補日数（${maxDays}日）を超えて登録することはできません`, 'error'); return;
+      }
     }
+
     setBusy(true);
     try {
-      const updatedCands = await api.addCandidate(projectId, newCandidate);
+      let updatedCands;
+      if (editingCandidateId) {
+        updatedCands = await api.updateCandidate(projectId, editingCandidateId, newCandidate);
+        addToast('候補日を修正しました');
+      } else {
+        updatedCands = await api.addCandidate(projectId, newCandidate);
+        addToast('候補日を追加しました');
+      }
       setProject(p => ({ ...p, candidates: updatedCands }));
       setNewCandidate({ date: '', date_to: '', time: '', cs_members: [] });
+      setEditingCandidateId(null);
       setConflicts(null);
       setShowAddForm(false);
-      addToast('候補日を追加しました');
       onRefresh();
     } catch (err) { addToast(err.message, 'error'); }
     finally { setBusy(false); }
@@ -422,8 +455,8 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
         <div className="card">
           <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12 }}>
             <div className="section-title" style={{ marginBottom:0 }}>{isConfirmed ? '確定スケジュール' : '候補日'}</div>
-            {canEditCandidates && cands.length < maxDays && (
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowAddForm(v => !v)}>
+            {canEditCandidates && cands.length < maxDays && !editingCandidateId && (
+              <button className="btn btn-ghost btn-sm" onClick={() => { setEditingCandidateId(null); setShowAddForm(v => !v); }}>
                 {showAddForm ? '閉じる' : '+ 追加'}
               </button>
             )}
@@ -433,7 +466,9 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
           {showAddForm && canEditCandidates && (
             <form onSubmit={handleAddCandidate} style={{ marginBottom:12,padding:12,background:'rgba(59,130,246,0.06)',borderRadius:8,border:'1px solid rgba(59,130,246,0.2)' }}>
               <div style={{ fontSize:'0.78rem',color:'var(--text-sub)',marginBottom:8 }}>
-                第{cands.length+1}候補を追加（希望候補日数：{maxDays}日）
+                {editingCandidateId
+                  ? `候補日を修正（希望候補日数：${maxDays}日）`
+                  : `第${cands.length+1}候補を追加（希望候補日数：${maxDays}日）`}
               </div>
               <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:6 }}>
                 <div>
@@ -509,9 +544,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                 ) : null
               )}
               <div style={{ display:'flex',gap:8 }}>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setShowAddForm(false); setConflicts(null); }}>キャンセル</button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={handleCancelEdit}>キャンセル</button>
                 <button type="submit" className="btn btn-primary btn-sm"
-                  disabled={busy || conflicts?.blocked || conflicts?.sales_reps?.length >= 2}>追加する</button>
+                  disabled={busy || conflicts?.blocked || conflicts?.sales_reps?.length >= 2}>
+                  {editingCandidateId ? '修正を保存' : '追加する'}
+                </button>
               </div>
             </form>
           )}
@@ -541,6 +578,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                 )}
               </div>
               <div style={{ display:'flex',gap:8 }}>
+                {canEditCandidates && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => handleEditCandidateStart(c)} disabled={busy}>
+                    編集
+                  </button>
+                )}
                 {canConfirm && (
                   isAdmin
                     ? <button className="btn btn-success btn-sm" onClick={() => openConfirmModal(c)} disabled={busy}>確定</button>

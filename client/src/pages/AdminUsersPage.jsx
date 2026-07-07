@@ -699,7 +699,7 @@ const AVAILABLE_VARS = {
   schedule_proposed:   ['case_id', 'project_type', 'client_name', 'sales_rep', 'delivery_method', 'candidate_days', 'memo'],
   candidates_set:      ['case_id', 'project_type', 'client_name', 'sales_rep', 'delivery_method', 'cs_members', 'candidate_list'],
   schedule_confirmed:  ['case_id', 'project_type', 'client_name', 'sales_rep', 'delivery_method', 'cs_members', 'confirmed_date', 'shortage_reason_line'],
-  schedule_cancelled:  ['case_id', 'project_type', 'client_name', 'sales_rep', 'confirmed_date', 'cancel_reason'],
+  schedule_cancelled:  ['case_id', 'project_type', 'client_name', 'sales_rep', 'confirmed_date', 'cs_members', 'cancel_reason'],
   reminder:            ['case_id', 'project_type', 'client_name', 'sales_rep', 'candidate_days', 'created_at'],
   auto_cancel_warning: ['case_id', 'project_type', 'client_name', 'sales_rep', 'deadline_date'],
   auto_cancelled:      ['case_id', 'project_type', 'client_name', 'sales_rep'],

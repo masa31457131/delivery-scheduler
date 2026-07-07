@@ -45,6 +45,7 @@ export const api = {
   createProject: (data) => req('POST', '/projects', data),
   updateProject: (id, data) => req('PUT', `/projects/${id}`, data),
   addCandidate: (projectId, data) => req('POST', `/projects/${projectId}/candidates`, data),
+  updateCandidate: (projectId, candidateId, data) => req('PUT', `/projects/${projectId}/candidates/${candidateId}`, data),
   deleteCandidate: (projectId, candidateId) => req('DELETE', `/projects/${projectId}/candidates/${candidateId}`),
   finalizeCandidates: (projectId) => req('POST', `/projects/${projectId}/candidates/finalize`),
   confirmSchedule: (id, data) => req('POST', `/projects/${id}/confirm-schedule`, data),
