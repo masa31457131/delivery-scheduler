@@ -152,6 +152,7 @@ CS担当者：{{cs_members}}
 案件ID：{{case_id}}
 担当営業：{{sales_rep}}
 確定日：{{confirmed_date}}
+この日程のCS担当者：{{cs_members}}
 キャンセル理由：{{cancel_reason}}
 
 再スケジュールが必要な場合は新規案件として再申請してください。`
@@ -781,6 +782,22 @@ app.post('/api/projects/:id/candidates', async (req, res) => {
   res.status(201).json(updated.map(r => ({ ...r, cs_members: JSON.parse(r.cs_members || '[]') })));
 });
 
+// 候補日 編集（管理者が設定済みの候補日を修正）
+app.put('/api/projects/:id/candidates/:candidateId', async (req, res) => {
+  const { date, date_to, time, cs_members } = req.body;
+  if (!date) return res.status(400).json({ error: '日付は必須です' });
+  const { rows } = await pool.query('SELECT * FROM schedule_candidates WHERE id=$1 AND project_id=$2', [req.params.candidateId, req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: '候補日が見つかりません' });
+  const csMembersJson = cs_members !== undefined ? JSON.stringify(cs_members) : rows[0].cs_members;
+  await pool.query(
+    'UPDATE schedule_candidates SET candidate_date=$1, candidate_date_to=$2, candidate_time=$3, cs_members=$4 WHERE id=$5',
+    [date, date_to || '', time || '', csMembersJson, req.params.candidateId]
+  );
+  await pool.query('UPDATE projects SET updated_at=NOW() WHERE id=$1', [req.params.id]);
+  const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
+  res.json(updated.map(r => ({ ...r, cs_members: JSON.parse(r.cs_members || '[]') })));
+});
+
 // 候補日 削除
 app.delete('/api/projects/:id/candidates/:candidateId', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM schedule_candidates WHERE id=$1 AND project_id=$2', [req.params.candidateId, req.params.id]);
@@ -887,7 +904,9 @@ app.post('/api/projects/:id/cancel', async (req, res) => {
   if (allTo.length) {
     await sendTemplatedEmail('schedule_cancelled', allTo, {
       case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
-      confirmed_date: p.confirmed_date || '未確定', cancel_reason: reason.trim(),
+      confirmed_date: p.confirmed_date || '未確定',
+      cs_members: (p.cs_members && p.cs_members.length) ? p.cs_members.join('、') : 'なし',
+      cancel_reason: reason.trim(),
     });
   }
   res.json({ ...parseProject(updated[0]), candidates: [] });
