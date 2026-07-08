@@ -7,6 +7,7 @@ const fs = require('fs');
 const { Resend } = require('resend');
 const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -442,12 +443,15 @@ async function initDB() {
 
     const { rows } = await client.query('SELECT COUNT(*) as c FROM users');
     if (parseInt(rows[0].c) === 0) {
+      const hashedAdmin  = await bcrypt.hash('admin123', 10);
+      const hashedYamada = await bcrypt.hash('sales123', 10);
+      const hashedTanaka = await bcrypt.hash('sales456', 10);
       await client.query(
         `INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES
-         ($1,'管理者','管理者','admin','admin','admin123','','東京'),
-         ($2,'営業 山田','山田 太郎','yamada','sales','sales123','','東京'),
-         ($3,'営業 田中','田中 一郎','tanaka','sales','sales456','','大阪')`,
-        [uuidv4(), uuidv4(), uuidv4()]
+         ($1,'管理者','管理者','admin','admin',$4,'','東京'),
+         ($2,'営業 山田','山田 太郎','yamada','sales',$5,'','東京'),
+         ($3,'営業 田中','田中 一郎','tanaka','sales',$6,'','大阪')`,
+        [uuidv4(), uuidv4(), uuidv4(), hashedAdmin, hashedYamada, hashedTanaka]
       );
     }
     const { rows: sets } = await client.query("SELECT key FROM settings WHERE key='email_settings'");
@@ -455,6 +459,31 @@ async function initDB() {
       await client.query("INSERT INTO settings (key,value) VALUES ('email_settings',$1)",
         [JSON.stringify({ provider: 'gmail', from: '', notify_emails: [], gmail_user: '', gmail_app_password: '' })]);
     }
+
+    // ── 既存の平文パスワードを bcrypt ハッシュへ自動移行 ──────────
+    // bcryptハッシュは必ず $2a$ / $2b$ / $2y$ で始まる。それ以外は平文とみなして変換する。
+    const { rows: plainPwUsers } = await client.query(
+      `SELECT id, password FROM users WHERE password IS NOT NULL AND password !~ '^\\$2[aby]\\$'`
+    );
+    for (const u of plainPwUsers) {
+      const hashed = await bcrypt.hash(u.password, 10);
+      await client.query('UPDATE users SET password=$1 WHERE id=$2', [hashed, u.id]);
+    }
+    if (plainPwUsers.length > 0) {
+      console.log(`🔒 ${plainPwUsers.length}件の平文パスワードをbcryptハッシュへ移行しました`);
+    }
+
+    // ── RLS（Row Level Security）を全テーブルで有効化 ─────────────
+    // アプリは postgres ロールで直接接続するため RLS の影響を受けず、動作は変わらない。
+    // Supabase の PostgREST 経由の外部アクセスのみをブロックする（Lint: "RLS Disabled in Public" 対策）。
+    const rlsTables = ['users', 'projects', 'schedule_candidates', 'blocked_dates', 'settings'];
+    for (const t of rlsTables) {
+      await client.query(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`).catch(e => {
+        console.error(`[RLS] ${t} の有効化に失敗:`, e.message);
+      });
+    }
+    console.log('🔒 RLS enabled on all public tables');
+
     console.log('✅ DB initialized');
   } finally { client.release(); }
 }
@@ -468,24 +497,30 @@ if (fs.existsSync(CLIENT_BUILD)) app.use(express.static(CLIENT_BUILD));
 // ── Auth ──────────────────────────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
   const { name, password } = req.body;
+  if (!name || !password) return res.status(400).json({ error: 'ログインIDとパスワードを入力してください' });
   const { rows } = await pool.query(
-    'SELECT id,name,display_name,login_id,role,area FROM users WHERE login_id=$1 AND password=$2', [name, password]
+    'SELECT id,name,display_name,login_id,role,area,password FROM users WHERE login_id=$1', [name]
   );
-  if (!rows[0]) return res.status(401).json({ error: 'ログインIDまたはパスワードが違います' });
   const u = rows[0];
+  if (!u) return res.status(401).json({ error: 'ログインIDまたはパスワードが違います' });
+
+  const match = await bcrypt.compare(password, u.password).catch(() => false);
+  if (!match) return res.status(401).json({ error: 'ログインIDまたはパスワードが違います' });
+
   const displayName = u.display_name || u.name || u.login_id || 'ユーザー';
   res.json({ id: u.id, name: displayName, login_id: u.login_id, role: u.role, area: u.area || '東京' });
 });
 
 // ── ユーザー共通ヘルパー ──────────────────────────────────────
 async function upsertUser(id, { display_name, login_id, password, email, area, role }) {
+  const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
   await pool.query(
     `UPDATE users SET
       display_name=COALESCE($1,display_name), name=COALESCE($1,name),
       login_id=COALESCE($2,login_id), password=COALESCE($3,password),
       email=COALESCE($4,email), area=COALESCE($5,area)
      WHERE id=$6`,
-    [display_name || null, login_id || null, password || null, email !== undefined ? email : null, area || null, id]
+    [display_name || null, login_id || null, hashedPassword, email !== undefined ? email : null, area || null, id]
   );
 }
 
@@ -500,8 +535,9 @@ app.post('/api/users', async (req, res) => {
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
+  const hashedPassword = await bcrypt.hash(password, 10);
   await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-    [id, display_name, display_name, login_id, 'sales', password, email || '', area || '東京']);
+    [id, display_name, display_name, login_id, 'sales', hashedPassword, email || '', area || '東京']);
   res.status(201).json({ id, display_name, login_id, role: 'sales', email: email || '', area: area || '東京' });
 });
 app.put('/api/users/:id', async (req, res) => {
@@ -536,8 +572,9 @@ app.post('/api/admins', async (req, res) => {
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
+  const hashedPassword = await bcrypt.hash(password, 10);
   await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-    [id, display_name, display_name, login_id, 'admin', password, email || '', area || '東京']);
+    [id, display_name, display_name, login_id, 'admin', hashedPassword, email || '', area || '東京']);
   res.status(201).json({ id, display_name, login_id, role: 'admin', email: email || '', area: area || '東京' });
 });
 app.put('/api/admins/:id', async (req, res) => {
@@ -574,8 +611,9 @@ app.post('/api/cs-members', async (req, res) => {
   const dup = await pool.query('SELECT id FROM users WHERE login_id=$1', [login_id]);
   if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
   const id = uuidv4();
+  const hashedPassword = await bcrypt.hash(password, 10);
   await pool.query('INSERT INTO users (id,name,display_name,login_id,role,password,email,area) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-    [id, display_name, display_name, login_id, 'cs', password, email || '', area || '東京']);
+    [id, display_name, display_name, login_id, 'cs', hashedPassword, email || '', area || '東京']);
   res.status(201).json({ id, display_name, login_id, role: 'cs', email: email || '', area: area || '東京' });
 });
 app.put('/api/cs-members/:id', async (req, res) => {
