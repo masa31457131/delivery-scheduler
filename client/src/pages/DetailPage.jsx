@@ -472,17 +472,30 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                   ? `候補日を修正（希望候補日数：${maxDays}日）`
                   : `第${cands.length+1}候補を追加（希望候補日数：${maxDays}日）`}
               </div>
-              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:6 }}>
+              <div className="candidate-date-row">
                 <div>
                   <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>開始日 *</div>
                   <input type="date" value={newCandidate.date}
                     onChange={e => { setNewCandidate(c => ({ ...c, date: e.target.value })); checkConflict(e.target.value, newCandidate.time); }} required />
                 </div>
                 <div>
-                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>終了日（期間指定の場合）</div>
-                  <input type="date" value={newCandidate.date_to}
-                    onChange={e => setNewCandidate(c => ({ ...c, date_to: e.target.value }))}
-                    min={newCandidate.date} />
+                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>終了日（期間指定の場合のみ）</div>
+                  <div style={{ display:'flex', gap:8 }}>
+                    <input type="date" value={newCandidate.date_to} style={{ flex:1 }}
+                      onChange={e => setNewCandidate(c => ({ ...c, date_to: e.target.value }))}
+                      min={newCandidate.date} />
+                    {newCandidate.date_to && (
+                      <button type="button" className="field-clear-btn"
+                        onClick={() => setNewCandidate(c => ({ ...c, date_to: '' }))}>
+                        取消
+                      </button>
+                    )}
+                  </div>
+                  {!newCandidate.date_to && (
+                    <div style={{ fontSize:'0.68rem',color:'var(--text-sub)',marginTop:4 }}>
+                      未入力の場合は単日の候補として登録されます
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={{ marginBottom:8 }}>
