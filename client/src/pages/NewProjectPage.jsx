@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuth } from '../hooks/useAuth';
+import StaffPicker from '../components/StaffPicker';
 
 const PROJECT_TYPES = ['新規納品', '増設納品', 'PC入替え', 'I/O機器納品', '打合せ', '調査'];
 
@@ -16,6 +17,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
   });
   const [salesUsers, setSalesUsers] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [showSalesPicker, setShowSalesPicker] = useState(false);
 
   useEffect(() => { api.getUsers().then(setSalesUsers); }, []);
 
@@ -92,10 +94,23 @@ export default function NewProjectPage({ onSaved, addToast }) {
           {user.role === 'admin' ? (
             <div className="form-group">
               <label>担当営業 *</label>
-              <select value={form.sales_rep} onChange={e => setField('sales_rep', e.target.value)} required>
-                <option value="">選択してください</option>
-                {salesUsers.map(u => <option key={u.id} value={u.display_name}>{u.display_name}</option>)}
-              </select>
+              <button type="button" className="field-select-btn" onClick={() => setShowSalesPicker(true)}>
+                {form.sales_rep
+                  ? <span>{form.sales_rep}</span>
+                  : <span className="placeholder">担当営業を選択</span>}
+                <span className="chevron">›</span>
+              </button>
+              {showSalesPicker && (
+                <StaffPicker
+                  title="担当営業を選択"
+                  members={salesUsers}
+                  value={form.sales_rep ? [form.sales_rep] : []}
+                  multi={false}
+                  addToast={addToast}
+                  onChange={(names) => setField('sales_rep', names[0] || '')}
+                  onClose={() => setShowSalesPicker(false)}
+                />
+              )}
             </div>
           ) : (
             <div className="form-group">

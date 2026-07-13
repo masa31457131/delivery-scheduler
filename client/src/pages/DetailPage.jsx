@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuth } from '../hooks/useAuth';
 import { StatusBadge, formatDate, formatDateTime, STATUS_MAP } from '../components/StatusBadge';
+import StaffPicker from '../components/StaffPicker';
 
 const DELIVERY_LABELS = { remote: '🖥 リモート', onsite: '🚗 現地訪問' };
 
@@ -18,6 +19,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [editingCandidateId, setEditingCandidateId] = useState(null); // null=新規追加, id=編集中
   const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '', cs_members: [] });
   const [conflicts, setConflicts] = useState(null);
+  const [showCsPicker, setShowCsPicker] = useState(false);
 
   // 確定モーダル（CS部員選択）
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -494,39 +496,25 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                   <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:6,fontWeight:600 }}>
                     この候補日のCS部員（任意・最大2名）
                   </div>
-                  <div style={{ display:'flex',flexDirection:'column',gap:4 }}>
-                    {csMembers.map(m => {
-                      const checked = (newCandidate.cs_members || []).includes(m.display_name);
-                      return (
-                        <label key={m.id} style={{
-                          display:'flex',alignItems:'center',gap:8,padding:'6px 10px',borderRadius:6,cursor:'pointer',
-                          background: checked ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.03)',
-                          border:`1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
-                        }}>
-                          <input type="checkbox" checked={checked}
-                            onChange={() => {
-                              setNewCandidate(prev => {
-                                const cur = prev.cs_members || [];
-                                if (cur.includes(m.display_name)) {
-                                  return { ...prev, cs_members: cur.filter(n => n !== m.display_name) };
-                                }
-                                if (cur.length >= 2) { addToast('CS部員は最大2名まで選択できます', 'error'); return prev; }
-                                return { ...prev, cs_members: [...cur, m.display_name] };
-                              });
-                            }}
-                            style={{ width:'auto',margin:0 }} />
-                          <span style={{ flex:1,fontSize:'0.85rem' }}>{m.display_name}</span>
-                          <span style={{ fontSize:'0.65rem',padding:'1px 6px',borderRadius:99,background:'rgba(59,130,246,0.12)',color:'var(--accent-lt)' }}>📍{m.area}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {(newCandidate.cs_members || []).length > 0 && (
-                    <div style={{ fontSize:'0.72rem',color:'var(--accent-lt)',marginTop:4 }}>
-                      選択中：{(newCandidate.cs_members || []).join('、')}
-                    </div>
-                  )}
+                  <button type="button" className="field-select-btn" onClick={() => setShowCsPicker(true)}>
+                    {(newCandidate.cs_members || []).length > 0
+                      ? <span>{newCandidate.cs_members.join('、')}</span>
+                      : <span className="placeholder">CS部員を選択</span>}
+                    <span className="chevron">›</span>
+                  </button>
                 </div>
+              )}
+              {showCsPicker && (
+                <StaffPicker
+                  title="CS部員を選択（最大2名）"
+                  members={csMembers}
+                  value={newCandidate.cs_members || []}
+                  multi
+                  max={2}
+                  addToast={addToast}
+                  onChange={(names) => setNewCandidate(c => ({ ...c, cs_members: names }))}
+                  onClose={() => setShowCsPicker(false)}
+                />
               )}
               {conflicts && (
                 conflicts.blocked ? (
