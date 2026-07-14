@@ -21,10 +21,24 @@
 
 body {
   font-family: 'Noto Sans JP', 'Inter', sans-serif;
-  background: var(--navy);
+  background:
+    radial-gradient(650px circle at 12% -8%, rgba(59,130,246,0.32), transparent 60%),
+    radial-gradient(550px circle at 92% 22%, rgba(168,85,247,0.26), transparent 60%),
+    radial-gradient(550px circle at 15% 95%, rgba(245,158,11,0.15), transparent 60%),
+    var(--navy);
+  background-attachment: fixed;
   color: var(--text);
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
+}
+
+/* ── Glass surface (リキッドグラス) ──────── */
+.glass {
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.08);
 }
 
 /* ── Layout ──────────────────────────────── */
@@ -35,8 +49,10 @@ body {
 }
 
 .topbar {
-  background: var(--navy-mid);
-  border-bottom: 1px solid var(--border);
+  background: rgba(26,35,50,0.55);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border-bottom: 1px solid rgba(255,255,255,0.10);
   padding: 0 16px;
   height: 56px;
   display: flex;
@@ -73,7 +89,7 @@ body {
 
 .main-content {
   flex: 1;
-  padding: 20px 16px 100px;
+  padding: 20px 16px 110px;
   max-width: 800px;
   margin: 0 auto;
   width: 100%;
@@ -82,12 +98,19 @@ body {
 /* ── Bottom Nav ──────────────────────────── */
 .bottom-nav {
   position: fixed;
-  bottom: 0; left: 0; right: 0;
-  background: var(--navy-mid);
-  border-top: 1px solid var(--border);
+  bottom: max(14px, env(safe-area-inset-bottom));
+  left: 16px; right: 16px;
+  background: rgba(26,35,50,0.55);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
+  border-radius: 28px;
   display: flex;
-  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+  padding: 8px 6px;
   z-index: 100;
+  max-width: 480px;
+  margin: 0 auto;
 }
 
 .nav-item {
@@ -112,9 +135,12 @@ body {
 
 /* ── Cards ───────────────────────────────── */
 .card {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: rgba(255,255,255,0.055);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 6px 22px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.06);
+  border-radius: 16px;
   padding: 16px;
   margin-bottom: 12px;
 }
@@ -241,7 +267,7 @@ textarea { resize: vertical; min-height: 80px; }
   margin-bottom: 20px;
 }
 
-/* ── Stats Grid ──────────────────────────── */
+/* ── Stats Grid (Bento) ──────────────────── */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -250,12 +276,27 @@ textarea { resize: vertical; min-height: 80px; }
 }
 
 .stat-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px;
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.08);
+  border-radius: 18px;
+  padding: 16px;
   text-align: center;
 }
+
+.stat-card:first-child {
+  grid-column: span 2;
+  text-align: left;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.stat-card:nth-child(2) { box-shadow: 0 8px 24px rgba(245,158,11,0.16), inset 0 1px 0 rgba(255,255,255,0.08); }
+.stat-card:nth-child(3) { box-shadow: 0 8px 24px rgba(59,130,246,0.16), inset 0 1px 0 rgba(255,255,255,0.08); }
+.stat-card:nth-child(4) { box-shadow: 0 8px 24px rgba(16,185,129,0.16), inset 0 1px 0 rgba(255,255,255,0.08); }
 
 .stat-value {
   font-size: 2rem;
@@ -269,6 +310,8 @@ textarea { resize: vertical; min-height: 80px; }
   color: var(--text-sub);
   margin-top: 4px;
 }
+
+.stat-card:first-child .stat-label { margin-top: 0; }
 
 /* ── Candidate dates ─────────────────────── */
 .candidate-list {
@@ -370,8 +413,10 @@ textarea { resize: vertical; min-height: 80px; }
 .filter-chip {
   padding: 6px 14px;
   border-radius: 99px;
-  border: 1px solid var(--border);
-  background: var(--card-bg);
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
   color: var(--text-sub);
   font-size: 0.78rem;
   font-weight: 500;
@@ -383,9 +428,10 @@ textarea { resize: vertical; min-height: 80px; }
 }
 
 .filter-chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: rgba(59,130,246,0.55);
+  border-color: rgba(59,130,246,0.6);
   color: #fff;
+  box-shadow: 0 4px 16px rgba(59,130,246,0.3);
 }
 
 /* ── Login ───────────────────────────────── */
@@ -399,9 +445,12 @@ textarea { resize: vertical; min-height: 80px; }
 }
 
 .login-card {
-  background: var(--navy-mid);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 12px 36px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
+  border-radius: 20px;
   padding: 32px 24px;
   width: 100%;
   max-width: 360px;
@@ -526,7 +575,9 @@ textarea { resize: vertical; min-height: 80px; }
 }
 
 .picker-sheet {
-  background: var(--navy-mid);
+  background: rgba(26,35,50,0.7);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
   border: none;
   border-radius: 0;
   width: 100%;
@@ -541,8 +592,9 @@ textarea { resize: vertical; min-height: 80px; }
 @media (min-width: 640px) {
   .picker-overlay { align-items: center; }
   .picker-sheet {
-    border: 1px solid var(--border);
-    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
+    border-radius: 20px;
     max-width: 480px;
     height: auto;
     max-height: 80dvh;
@@ -686,4 +738,5 @@ textarea { resize: vertical; min-height: 80px; }
 @media (min-width: 640px) {
   .main-content { padding: 28px 24px 80px; }
   .stats-grid { grid-template-columns: repeat(4, 1fr); }
+  .stat-card:first-child { grid-column: span 1; text-align: center; display: block; }
 }
