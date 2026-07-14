@@ -111,7 +111,10 @@ const DEFAULT_TEMPLATES = {
 希望候補日数：{{candidate_days}}日
 備考：{{memo}}
 
-候補日をカレンダーで確認して設定してください。`
+候補日をカレンダーで確認して設定してください。
+
+▼ 納品スケジューラー
+https://delivery-scheduler-c4cd.onrender.com`
   },
   candidates_set: {
     subject: '【仮スケジュール設定完了】{{project_type}}（{{client_name}}）',
@@ -127,7 +130,10 @@ CS担当者：{{cs_members}}
 ▼候補日一覧
 {{candidate_list}}
 
-担当営業は候補日の中から日程を確定してください。`
+担当営業は候補日の中から日程を確定してください。
+
+▼ 納品スケジューラー
+https://delivery-scheduler-c4cd.onrender.com`
   },
   schedule_confirmed: {
     subject: '【日程確定】{{project_type}}（{{client_name}}）',
@@ -142,7 +148,10 @@ CS担当者：{{cs_members}}
 納品方法：{{delivery_method}}
 {{shortage_reason_line}}
 
-日程が確定しました。準備をお願いします。`
+日程が確定しました。準備をお願いします。
+
+▼ 納品スケジューラー
+https://delivery-scheduler-c4cd.onrender.com`
   },
   schedule_cancelled: {
     subject: '【キャンセル】{{project_type}}（{{client_name}}）',
@@ -156,7 +165,10 @@ CS担当者：{{cs_members}}
 この日程のCS担当者：{{cs_members}}
 キャンセル理由：{{cancel_reason}}
 
-再スケジュールが必要な場合は新規案件として再申請してください。`
+再スケジュールが必要な場合は新規案件として再申請してください。
+
+▼ 納品スケジューラー
+https://delivery-scheduler-c4cd.onrender.com`
   },
   reminder: {
     subject: '【リマインド】仮スケジュール日程未設定：{{project_type}}（{{client_name}}）',
@@ -169,7 +181,10 @@ CS担当者：{{cs_members}}
 希望候補日数：{{candidate_days}}日
 依頼日：{{created_at}}
 
-候補日が未設定のままです。早急にスケジュールを設定してください。`
+候補日が未設定のままです。早急にスケジュールを設定してください。
+
+▼ 納品スケジューラー
+https://delivery-scheduler-c4cd.onrender.com`
   },
   auto_cancel_warning: {
     subject: '【警告】明日自動キャンセル予定：{{project_type}}（{{client_name}}）',
@@ -181,7 +196,10 @@ CS担当者：{{cs_members}}
 自動キャンセル日：{{deadline_date}}
 理由：仮スケジュール設定から10営業日経過
 
-本日中にスケジュールを確定するか、担当者に連絡してください。`
+本日中にスケジュールを確定するか、担当者に連絡してください。
+
+▼ 納品スケジューラー
+https://delivery-scheduler-c4cd.onrender.com`
   },
   auto_cancelled: {
     subject: '【自動キャンセル】{{project_type}}（{{client_name}}）',
@@ -192,7 +210,10 @@ CS担当者：{{cs_members}}
 担当営業：{{sales_rep}}
 キャンセル理由：仮スケジュール設定から10営業日経過のため自動キャンセル
 
-再スケジュールが必要な場合は新規案件として再申請してください。`
+再スケジュールが必要な場合は新規案件として再申請してください。
+
+▼ 納品スケジューラー
+https://delivery-scheduler-c4cd.onrender.com`
   },
 };
 
@@ -1002,8 +1023,73 @@ async function runAutoCancel() {
 }
 
 app.delete('/api/projects/:id', async (req, res) => {
+  const { requester_login_id } = req.query;
+  // requester が営業の場合、自分の担当案件かチェック
+  if (requester_login_id) {
+    const { rows: reqUser } = await pool.query('SELECT role, display_name FROM users WHERE login_id=$1', [requester_login_id]);
+    const requester = reqUser[0];
+    if (requester && requester.role === 'sales') {
+      const { rows: proj } = await pool.query('SELECT sales_rep FROM projects WHERE id=$1', [req.params.id]);
+      if (proj[0] && proj[0].sales_rep !== requester.display_name) {
+        return res.status(403).json({ error: '自分が担当する案件のみ削除できます' });
+      }
+    }
+  }
   await pool.query('DELETE FROM projects WHERE id=$1', [req.params.id]);
   res.json({ success: true });
+});
+
+// 選択削除：複数の案件IDを指定して一括削除
+app.post('/api/projects/bulk-delete', async (req, res) => {
+  const { ids, requester_login_id } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: '削除する案件が選択されていません' });
+  }
+
+  // requester が営業の場合、自分の担当案件IDのみに絞り込む（他人の案件IDが混じっていても無視）
+  let targetIds = ids;
+  if (requester_login_id) {
+    const { rows: reqUser } = await pool.query('SELECT role, display_name FROM users WHERE login_id=$1', [requester_login_id]);
+    const requester = reqUser[0];
+    if (requester && requester.role === 'sales') {
+      const { rows: ownedProjects } = await pool.query(
+        'SELECT id FROM projects WHERE id = ANY($1) AND sales_rep=$2',
+        [ids, requester.display_name]
+      );
+      targetIds = ownedProjects.map(p => p.id);
+      if (targetIds.length === 0) {
+        return res.status(403).json({ error: '削除できる案件がありません（自分が担当する案件のみ削除できます）' });
+      }
+    }
+  }
+
+  const { rowCount } = await pool.query('DELETE FROM projects WHERE id = ANY($1)', [targetIds]);
+  res.json({ success: true, deleted: rowCount });
+});
+
+// 一括削除：指定ステータスの案件を全件削除（確定済み／キャンセルのみ許可）
+app.post('/api/projects/delete-by-status', async (req, res) => {
+  const { status, requester_login_id } = req.body;
+  const allowedStatuses = ['confirmed', 'cancelled'];
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({ error: 'このステータスの一括削除はできません' });
+  }
+
+  // requester が営業の場合、自分の担当案件のみ削除（他営業の案件は対象外）
+  if (requester_login_id) {
+    const { rows: reqUser } = await pool.query('SELECT role, display_name FROM users WHERE login_id=$1', [requester_login_id]);
+    const requester = reqUser[0];
+    if (requester && requester.role === 'sales') {
+      const { rowCount } = await pool.query(
+        'DELETE FROM projects WHERE status=$1 AND sales_rep=$2',
+        [status, requester.display_name]
+      );
+      return res.json({ success: true, deleted: rowCount });
+    }
+  }
+
+  const { rowCount } = await pool.query('DELETE FROM projects WHERE status=$1', [status]);
+  res.json({ success: true, deleted: rowCount });
 });
 
 app.get('/api/stats', async (_req, res) => {
