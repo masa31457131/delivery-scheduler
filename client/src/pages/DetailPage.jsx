@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuth } from '../hooks/useAuth';
 import { StatusBadge, formatDate, formatDateTime, STATUS_MAP } from '../components/StatusBadge';
-import StaffPicker from '../components/StaffPicker';
 
 const DELIVERY_LABELS = { remote: '🖥 リモート', onsite: '🚗 現地訪問' };
 
@@ -19,7 +18,6 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [editingCandidateId, setEditingCandidateId] = useState(null); // null=新規追加, id=編集中
   const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '', cs_members: [] });
   const [conflicts, setConflicts] = useState(null);
-  const [showCsPicker, setShowCsPicker] = useState(false);
 
   // 確定モーダル（CS部員選択）
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -472,30 +470,17 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                   ? `候補日を修正（希望候補日数：${maxDays}日）`
                   : `第${cands.length+1}候補を追加（希望候補日数：${maxDays}日）`}
               </div>
-              <div className="candidate-date-row">
+              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:6 }}>
                 <div>
                   <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>開始日 *</div>
                   <input type="date" value={newCandidate.date}
                     onChange={e => { setNewCandidate(c => ({ ...c, date: e.target.value })); checkConflict(e.target.value, newCandidate.time); }} required />
                 </div>
                 <div>
-                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>終了日（期間指定の場合のみ）</div>
-                  <div style={{ display:'flex', gap:8 }}>
-                    <input type="date" value={newCandidate.date_to} style={{ flex:1 }}
-                      onChange={e => setNewCandidate(c => ({ ...c, date_to: e.target.value }))}
-                      min={newCandidate.date} />
-                    {newCandidate.date_to && (
-                      <button type="button" className="field-clear-btn"
-                        onClick={() => setNewCandidate(c => ({ ...c, date_to: '' }))}>
-                        取消
-                      </button>
-                    )}
-                  </div>
-                  {!newCandidate.date_to && (
-                    <div style={{ fontSize:'0.68rem',color:'var(--text-sub)',marginTop:4 }}>
-                      未入力の場合は単日の候補として登録されます
-                    </div>
-                  )}
+                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>終了日（期間指定の場合）</div>
+                  <input type="date" value={newCandidate.date_to}
+                    onChange={e => setNewCandidate(c => ({ ...c, date_to: e.target.value }))}
+                    min={newCandidate.date} />
                 </div>
               </div>
               <div style={{ marginBottom:8 }}>
@@ -509,25 +494,39 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                   <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:6,fontWeight:600 }}>
                     この候補日のCS部員（任意・最大2名）
                   </div>
-                  <button type="button" className="field-select-btn" onClick={() => setShowCsPicker(true)}>
-                    {(newCandidate.cs_members || []).length > 0
-                      ? <span>{newCandidate.cs_members.join('、')}</span>
-                      : <span className="placeholder">CS部員を選択</span>}
-                    <span className="chevron">›</span>
-                  </button>
+                  <div style={{ display:'flex',flexDirection:'column',gap:4 }}>
+                    {csMembers.map(m => {
+                      const checked = (newCandidate.cs_members || []).includes(m.display_name);
+                      return (
+                        <label key={m.id} style={{
+                          display:'flex',alignItems:'center',gap:8,padding:'6px 10px',borderRadius:6,cursor:'pointer',
+                          background: checked ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.03)',
+                          border:`1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
+                        }}>
+                          <input type="checkbox" checked={checked}
+                            onChange={() => {
+                              setNewCandidate(prev => {
+                                const cur = prev.cs_members || [];
+                                if (cur.includes(m.display_name)) {
+                                  return { ...prev, cs_members: cur.filter(n => n !== m.display_name) };
+                                }
+                                if (cur.length >= 2) { addToast('CS部員は最大2名まで選択できます', 'error'); return prev; }
+                                return { ...prev, cs_members: [...cur, m.display_name] };
+                              });
+                            }}
+                            style={{ width:'auto',margin:0 }} />
+                          <span style={{ flex:1,fontSize:'0.85rem' }}>{m.display_name}</span>
+                          <span style={{ fontSize:'0.65rem',padding:'1px 6px',borderRadius:99,background:'rgba(59,130,246,0.12)',color:'var(--accent-lt)' }}>📍{m.area}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {(newCandidate.cs_members || []).length > 0 && (
+                    <div style={{ fontSize:'0.72rem',color:'var(--accent-lt)',marginTop:4 }}>
+                      選択中：{(newCandidate.cs_members || []).join('、')}
+                    </div>
+                  )}
                 </div>
-              )}
-              {showCsPicker && (
-                <StaffPicker
-                  title="CS部員を選択（最大2名）"
-                  members={csMembers}
-                  value={newCandidate.cs_members || []}
-                  multi
-                  max={2}
-                  addToast={addToast}
-                  onChange={(names) => setNewCandidate(c => ({ ...c, cs_members: names }))}
-                  onClose={() => setShowCsPicker(false)}
-                />
               )}
               {conflicts && (
                 conflicts.blocked ? (

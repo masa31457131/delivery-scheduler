@@ -13,6 +13,9 @@ const STATUS_FILTERS = [
   { key: 'cancelled', label: 'キャンセル' },
 ];
 
+// 削除機能を許可するステータス（管理者のみ）
+const DELETABLE_STATUSES = ['confirmed', 'cancelled'];
+
 export default function DashboardPage({ onNavigate }) {
   const { user } = useAuth();
   // デフォルトは「候補日待ち」（営業・管理者共通）
@@ -26,15 +29,28 @@ export default function DashboardPage({ onNavigate }) {
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  // 選択削除モード
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [deleting, setDeleting] = useState(false);
+
+  const load = () => {
     const calls = [api.getProjects(), api.getStats()];
     if (user.role === 'admin') calls.push(api.getUsers());
-    Promise.all(calls).then(([p, s, u]) => {
+    return Promise.all(calls).then(([p, s, u]) => {
       setProjects(p);
       setStats(s);
       if (u) setSalesUsers(u);
     }).finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  // ステータス切り替え時は選択モードをリセット
+  useEffect(() => {
+    setSelectMode(false);
+    setSelectedIds([]);
+  }, [statusFilter]);
 
   // display_name → area のマップ（管理者がエリア絞り込みに使用）
   const areaByName = {};
@@ -59,6 +75,47 @@ export default function DashboardPage({ onNavigate }) {
   const pageSubText = user.role === 'sales'
     ? `${user.name}の案件`
     : (memberFilter !== 'all' ? `${memberFilter}の案件` : (areaFilter === 'all' ? '全エリアの案件' : `${areaFilter}エリアの案件`));
+
+  const canDelete = (user.role === 'admin' || user.role === 'sales') && DELETABLE_STATUSES.includes(statusFilter);
+
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const selectAll = () => setSelectedIds(filtered.map(p => p.id));
+  const clearSelection = () => setSelectedIds([]);
+
+  const handleBulkDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    if (!confirm(`選択した${selectedIds.length}件の案件を削除しますか？\nこの操作は取り消せません。`)) return;
+    setDeleting(true);
+    try {
+      await api.bulkDeleteProjects(selectedIds, user.login_id);
+      setSelectedIds([]);
+      setSelectMode(false);
+      await load();
+    } catch (err) {
+      alert(err.message);
+    } finally { setDeleting(false); }
+  };
+
+  const handleDeleteAllInStatus = async () => {
+    const label = STATUS_FILTERS.find(f => f.key === statusFilter)?.label || statusFilter;
+    const count = filtered.length;
+    if (count === 0) return;
+    const scopeText = user.role === 'sales' ? '自分が担当する' : '現在の絞り込み条件（メンバー・エリア）に一致する';
+    if (!confirm(`「${label}」の案件を全て削除しますか？（${count}件）\n※${scopeText}案件が全て対象です。\nこの操作は取り消せません。`)) return;
+    setDeleting(true);
+    try {
+      // 現在のフィルタ条件に一致するIDのみ削除（表示中のものだけ安全に削除）
+      const idsToDelete = filtered.map(p => p.id);
+      await api.bulkDeleteProjects(idsToDelete, user.login_id);
+      setSelectedIds([]);
+      setSelectMode(false);
+      await load();
+    } catch (err) {
+      alert(err.message);
+    } finally { setDeleting(false); }
+  };
 
   return (
     <>
@@ -113,6 +170,48 @@ export default function DashboardPage({ onNavigate }) {
         ))}
       </div>
 
+      {/* 削除操作バー（確定済み・キャンセルタブでのみ表示。営業は自分の案件のみ削除可能） */}
+      {canDelete && filtered.length > 0 && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 8,
+          padding: '10px 12px', marginBottom: 12, borderRadius: 10,
+          background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)',
+        }}>
+          {user.role === 'sales' && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-sub)' }}>
+              ご自身が担当する案件のみ削除できます
+            </div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {!selectMode ? (
+            <>
+              <button className="btn btn-ghost btn-sm" onClick={() => setSelectMode(true)}>
+                🗑 データ選択削除
+              </button>
+              <button className="btn btn-danger btn-sm" onClick={handleDeleteAllInStatus} disabled={deleting}>
+                {deleting ? '削除中...' : `🗑 データ一括削除（${filtered.length}件）`}
+              </button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: '0.82rem', color: 'var(--text-sub)' }}>
+                {selectedIds.length}件を選択中
+              </span>
+              <button className="btn btn-ghost btn-sm" onClick={selectAll}>全て選択</button>
+              <button className="btn btn-ghost btn-sm" onClick={clearSelection}>選択解除</button>
+              <button className="btn btn-danger btn-sm" onClick={handleBulkDeleteSelected}
+                disabled={deleting || selectedIds.length === 0}>
+                {deleting ? '削除中...' : `選択した${selectedIds.length}件を削除`}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setSelectMode(false); setSelectedIds([]); }}>
+                キャンセル
+              </button>
+            </>
+          )}
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="empty-state">読み込み中...</div>
       ) : filtered.length === 0 ? (
@@ -125,20 +224,45 @@ export default function DashboardPage({ onNavigate }) {
         </div>
       ) : (
         filtered.map(project => (
-          <ProjectCard key={project.id} project={project} onNavigate={onNavigate} />
+          <ProjectCard
+            key={project.id}
+            project={project}
+            onNavigate={onNavigate}
+            selectMode={selectMode}
+            selected={selectedIds.includes(project.id)}
+            onToggleSelect={() => toggleSelect(project.id)}
+          />
         ))
       )}
     </>
   );
 }
 
-function ProjectCard({ project, onNavigate }) {
+function ProjectCard({ project, onNavigate, selectMode, selected, onToggleSelect }) {
   const hasCandidates = project.candidates?.length > 0;
   const hasConfirmed  = !!project.confirmed_date && project.status === 'confirmed';
   const isCancelled = project.status === 'cancelled';
 
+  const handleClick = () => {
+    if (selectMode) onToggleSelect();
+    else onNavigate('detail', project.id);
+  };
+
   return (
-    <div className="card" onClick={() => onNavigate('detail', project.id)} style={{ cursor: 'pointer' }}>
+    <div className="card" onClick={handleClick} style={{
+      cursor: 'pointer',
+      position: 'relative',
+      border: selectMode && selected ? '2px solid var(--danger)' : undefined,
+      background: selectMode && selected ? 'rgba(239,68,68,0.06)' : undefined,
+    }}>
+      {selectMode && (
+        <div style={{ position: 'absolute', top: 12, right: 12 }}>
+          <input type="checkbox" checked={selected} onChange={onToggleSelect}
+            onClick={e => e.stopPropagation()}
+            style={{ width: 20, height: 20, cursor: 'pointer' }} />
+        </div>
+      )}
+
       <div className="card-header">
         <div>
           <div className="project-name">{project.project_type || '—'}</div>
@@ -149,7 +273,7 @@ function ProjectCard({ project, onNavigate }) {
             </div>
           )}
         </div>
-        <StatusBadge status={project.status} />
+        {!selectMode && <StatusBadge status={project.status} />}
       </div>
 
       <div style={{ fontSize: '0.78rem', color: 'var(--text-sub)', display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>

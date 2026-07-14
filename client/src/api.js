@@ -51,6 +51,8 @@ export const api = {
   confirmSchedule: (id, data) => req('POST', `/projects/${id}/confirm-schedule`, data),
   cancelProject: (id, data) => req('POST', `/projects/${id}/cancel`, data),
   sendReminder: (id, requesterLoginId) => req('POST', `/projects/${id}/remind`, { requester_login_id: requesterLoginId }),
-  deleteProject: (id) => req('DELETE', `/projects/${id}`),
+  deleteProject: (id, requesterLoginId) => req('DELETE', `/projects/${id}${requesterLoginId ? `?requester_login_id=${encodeURIComponent(requesterLoginId)}` : ''}`),
+  bulkDeleteProjects: (ids, requesterLoginId) => req('POST', '/projects/bulk-delete', { ids, requester_login_id: requesterLoginId }),
+  deleteProjectsByStatus: (status, requesterLoginId) => req('POST', '/projects/delete-by-status', { status, requester_login_id: requesterLoginId }),
   getStats: () => req('GET', '/stats'),
 };
