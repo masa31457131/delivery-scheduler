@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuth } from '../hooks/useAuth';
 import { StatusBadge, formatDate, relativeTime } from '../components/StatusBadge';
+import StaffPicker from '../components/StaffPicker';
 
 const DELIVERY_ICONS = { remote: '🖥', onsite: '🚗' };
 const AREAS = ['東京', '大阪'];
@@ -22,12 +23,17 @@ export default function DashboardPage({ onNavigate }) {
   const [statusFilter, setStatusFilter] = useState('pending');
   // 管理者用：表示対象メンバー（'all' または 営業の display_name）
   const [memberFilter, setMemberFilter] = useState('all');
+  // 管理者用：表示対象CS部員（'all' または CS部員の display_name）
+  const [csFilter, setCsFilter] = useState('all');
   // 管理者用：エリアフィルター（デフォルトは自分のエリアのみ）
   const [areaFilter, setAreaFilter] = useState(user.area || '東京');
   const [salesUsers, setSalesUsers] = useState([]);
+  const [csMembers, setCsMembers] = useState([]);
   const [projects, setProjects] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
+  const [showSalesPicker, setShowSalesPicker] = useState(false);
+  const [showCsPicker, setShowCsPicker] = useState(false);
 
   // 選択削除モード
   const [selectMode, setSelectMode] = useState(false);
@@ -36,11 +42,12 @@ export default function DashboardPage({ onNavigate }) {
 
   const load = () => {
     const calls = [api.getProjects(), api.getStats()];
-    if (user.role === 'admin') calls.push(api.getUsers());
-    return Promise.all(calls).then(([p, s, u]) => {
+    if (user.role === 'admin') calls.push(api.getUsers(), api.getCsMembers());
+    return Promise.all(calls).then(([p, s, u, cs]) => {
       setProjects(p);
       setStats(s);
       if (u) setSalesUsers(u);
+      if (cs) setCsMembers(cs);
     }).finally(() => setLoading(false));
   };
 
@@ -60,6 +67,13 @@ export default function DashboardPage({ onNavigate }) {
     if (p.status !== statusFilter) return false;
     if (user.role === 'sales') return p.sales_rep === user.name;
 
+    // 管理者：CS部員個別指定があれば対象案件を絞り込み（案件レベル・候補日レベルどちらのCS割当も対象）
+    if (csFilter !== 'all') {
+      const projectCs = p.cs_members || [];
+      const candidateCs = (p.candidates || []).flatMap(c => c.cs_members || []);
+      if (!projectCs.includes(csFilter) && !candidateCs.includes(csFilter)) return false;
+    }
+
     // 管理者：メンバー個別指定があれば最優先
     if (memberFilter !== 'all') return p.sales_rep === memberFilter;
 
@@ -74,7 +88,10 @@ export default function DashboardPage({ onNavigate }) {
 
   const pageSubText = user.role === 'sales'
     ? `${user.name}の案件`
-    : (memberFilter !== 'all' ? `${memberFilter}の案件` : (areaFilter === 'all' ? '全エリアの案件' : `${areaFilter}エリアの案件`));
+    : [
+        memberFilter !== 'all' ? `${memberFilter}の案件` : (areaFilter === 'all' ? '全エリアの案件' : `${areaFilter}エリアの案件`),
+        csFilter !== 'all' ? `（CS：${csFilter}）` : '',
+      ].join('');
 
   const canDelete = (user.role === 'admin' || user.role === 'sales') && DELETABLE_STATUSES.includes(statusFilter);
 
@@ -147,17 +164,62 @@ export default function DashboardPage({ onNavigate }) {
         </div>
       )}
 
-      {/* 管理者専用：メンバー切り替え（選択中エリアの営業のみ表示） */}
+      {/* 管理者専用：営業メンバー・CS部員をリストから選択して絞り込み */}
       {user.role === 'admin' && (
-        <div className="filter-bar">
-          <button className={`filter-chip ${memberFilter === 'all' ? 'active' : ''}`} onClick={() => setMemberFilter('all')}>
-            👥 全メンバー
-          </button>
-          {visibleSalesUsers.map(u => (
-            <button key={u.id} className={`filter-chip ${memberFilter === u.display_name ? 'active' : ''}`} onClick={() => setMemberFilter(u.display_name)}>
-              {u.display_name}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <div style={{ flex: 1 }}>
+            <button
+              type="button"
+              className={`picker-trigger${memberFilter === 'all' ? ' empty' : ''}`}
+              onClick={() => setShowSalesPicker(true)}
+            >
+              <span className="picker-trigger-chips">
+                {memberFilter !== 'all'
+                  ? <span className="picker-trigger-chip">👤 {memberFilter}</span>
+                  : '👤 営業：全メンバー'}
+              </span>
+              <span className="picker-trigger-arrow">▼</span>
             </button>
-          ))}
+            {showSalesPicker && (
+              <StaffPicker
+                title="営業メンバーで絞り込み"
+                members={visibleSalesUsers}
+                value={memberFilter !== 'all' ? [memberFilter] : []}
+                onChange={(names) => setMemberFilter(names[0] || 'all')}
+                onClose={() => setShowSalesPicker(false)}
+                multi={false}
+              />
+            )}
+          </div>
+          <div style={{ flex: 1 }}>
+            <button
+              type="button"
+              className={`picker-trigger${csFilter === 'all' ? ' empty' : ''}`}
+              onClick={() => setShowCsPicker(true)}
+            >
+              <span className="picker-trigger-chips">
+                {csFilter !== 'all'
+                  ? <span className="picker-trigger-chip">🛠 {csFilter}</span>
+                  : '🛠 CS：全員'}
+              </span>
+              <span className="picker-trigger-arrow">▼</span>
+            </button>
+            {showCsPicker && (
+              <StaffPicker
+                title="CS部員で絞り込み"
+                members={csMembers}
+                value={csFilter !== 'all' ? [csFilter] : []}
+                onChange={(names) => setCsFilter(names[0] || 'all')}
+                onClose={() => setShowCsPicker(false)}
+                multi={false}
+              />
+            )}
+          </div>
+          {(memberFilter !== 'all' || csFilter !== 'all') && (
+            <button className="btn btn-ghost btn-sm" onClick={() => { setMemberFilter('all'); setCsFilter('all'); }}>
+              クリア
+            </button>
+          )}
         </div>
       )}
 

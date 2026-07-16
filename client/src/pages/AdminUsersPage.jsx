@@ -34,29 +34,20 @@ export default function AdminUsersPage({ addToast }) {
 function UsersTab({ addToast }) {
   const [users, setUsers] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [editTarget, setEditTarget] = useState(null);
   const [form, setForm] = useState({ display_name: '', login_id: '', password: '', email: '', area: '東京' });
   const [loading, setLoading] = useState(false);
 
   const load = () => api.getUsers().then(setUsers);
   useEffect(() => { load(); }, []);
 
-  const openAdd = () => { setEditTarget(null); setForm({ display_name: '', login_id: '', password: '', email: '', area: '東京' }); setShowForm(true); };
-  const openEdit = (u) => { setEditTarget(u); setForm({ display_name: u.display_name, login_id: u.login_id, password: '', email: u.email || '', area: u.area || '東京' }); setShowForm(true); };
-  const closeForm = () => { setShowForm(false); setEditTarget(null); };
+  const openAdd = () => { setForm({ display_name: '', login_id: '', password: '', email: '', area: '東京' }); setShowForm(true); };
+  const closeForm = () => { setShowForm(false); };
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-      if (editTarget) {
-        const payload = { display_name: form.display_name, login_id: form.login_id, email: form.email, area: form.area };
-        if (form.password) payload.password = form.password;
-        await api.updateUser(editTarget.id, payload);
-        addToast('更新しました');
-      } else {
-        await api.createUser(form);
-        addToast('追加しました');
-      }
+      await api.createUser(form);
+      addToast('追加しました');
       await load(); closeForm();
     } catch (err) { addToast(err.message, 'error'); }
     finally { setLoading(false); }
@@ -70,6 +61,10 @@ function UsersTab({ addToast }) {
 
   return (
     <>
+      <div style={{ padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)', borderRadius: 8, marginBottom: 16, fontSize: '0.78rem', color: 'var(--text-sub)', lineHeight: 1.6 }}>
+        営業担当の情報は追加・削除のみ可能です。情報を修正する場合は一度削除して再登録してください。
+      </div>
+
       <button className="btn btn-primary btn-sm" style={{ marginBottom: 16 }} onClick={openAdd}>+ 営業担当を追加</button>
 
       {showForm && (
@@ -78,7 +73,7 @@ function UsersTab({ addToast }) {
           <div style={{ background: 'var(--glass-bg)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', border: '1px solid var(--glass-border)',
             borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
             <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>
-              {editTarget ? '営業担当を編集' : '営業担当を追加'}
+              営業担当を追加
             </div>
             <form onSubmit={handleSubmit}>
               <div className="form-group">
@@ -93,11 +88,11 @@ function UsersTab({ addToast }) {
                   style={{ fontFamily: 'monospace' }} />
               </div>
               <div className="form-group">
-                <label>{editTarget ? '新しいパスワード（変更する場合のみ）' : 'パスワード *'}</label>
+                <label>パスワード *</label>
                 <input type="password" value={form.password}
                   onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  placeholder={editTarget ? '変更しない場合は空白' : 'パスワードを入力'}
-                  required={!editTarget} />
+                  placeholder="パスワードを入力"
+                  required />
               </div>
               <div className="form-group">
                 <label>メールアドレス（日程確定時に通知）</label>
@@ -125,7 +120,7 @@ function UsersTab({ addToast }) {
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={closeForm}>キャンセル</button>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={loading}>
-                  {loading ? '保存中...' : editTarget ? '更新' : '追加'}
+                  {loading ? '保存中...' : '追加'}
                 </button>
               </div>
             </form>
@@ -155,7 +150,6 @@ function UsersTab({ addToast }) {
               {u.email ? `📧 ${u.email}` : '📧 未設定'}
             </div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => openEdit(u)}>編集</button>
           <button className="btn btn-danger btn-sm" onClick={() => handleDelete(u)}>削除</button>
         </div>
       ))}
