@@ -17,9 +17,10 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   // 候補日追加・編集フォーム
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingCandidateId, setEditingCandidateId] = useState(null); // null=新規追加, id=編集中
-  const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '', cs_members: [] });
+  const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '', cs_members: [], sales_rep: '' });
   const [conflicts, setConflicts] = useState(null);
   const [showCandidateCsPicker, setShowCandidateCsPicker] = useState(false);
+  const [showCandidateSalesPicker, setShowCandidateSalesPicker] = useState(false);
 
   // 確定モーダル（CS部員選択）
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -63,6 +64,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
         confirmed_date: candidate.candidate_date,
         confirmed_time: candidate.candidate_time,
         cs_members: candidate.cs_members || [],   // ★ その候補日固有のCS担当者のみを引き継ぐ
+        sales_rep: candidate.sales_rep || project.sales_rep,
         shortage_reason: project.shortage_reason || '',
       });
       setProject(updated);
@@ -90,6 +92,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
         confirmed_date: confirmTarget.candidate_date,
         confirmed_time: confirmTarget.candidate_time,
         cs_members: selectedCs,
+        sales_rep: confirmTarget.sales_rep || project.sales_rep,
         shortage_reason: project.shortage_reason || '',
       });
       setProject(updated);
@@ -146,6 +149,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       date_to: candidate.candidate_date_to || '',
       time: candidate.candidate_time || '',
       cs_members: candidate.cs_members || [],
+      sales_rep: candidate.sales_rep || project.sales_rep || '',
     });
     setConflicts(null);
     setShowAddForm(true);
@@ -153,7 +157,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
 
   const handleCancelEdit = () => {
     setEditingCandidateId(null);
-    setNewCandidate({ date: '', date_to: '', time: '', cs_members: [] });
+    setNewCandidate({ date: '', date_to: '', time: '', cs_members: [], sales_rep: project?.sales_rep || '' });
     setConflicts(null);
     setShowAddForm(false);
   };
@@ -296,6 +300,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
               <div style={{ fontWeight:600,color:'var(--success)',fontSize:'1rem' }}>
                 {formatCandDate(confirmTarget)}
               </div>
+              {confirmTarget.sales_rep && (
+                <div style={{ fontSize:'0.8rem',color:'var(--success)',marginTop:4 }}>
+                  👤 担当営業：{confirmTarget.sales_rep}
+                </div>
+              )}
             </div>
 
             {/* CS部員の確認表示（この候補日に設定済みのCS担当者） */}
@@ -458,7 +467,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
           <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12 }}>
             <div className="section-title" style={{ marginBottom:0 }}>{isConfirmed ? '確定スケジュール' : '候補日'}</div>
             {canEditCandidates && cands.length < maxDays && !editingCandidateId && (
-              <button className="btn btn-ghost btn-sm" onClick={() => { setEditingCandidateId(null); setShowAddForm(v => !v); }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => {
+                setEditingCandidateId(null);
+                if (!showAddForm) setNewCandidate(c => ({ ...c, sales_rep: c.sales_rep || project.sales_rep || '' }));
+                setShowAddForm(v => !v);
+              }}>
                 {showAddForm ? '閉じる' : '+ 追加'}
               </button>
             )}
@@ -498,6 +511,37 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                 <input type="time" style={{ width:130 }} value={newCandidate.time}
                   onChange={e => { setNewCandidate(c => ({ ...c, time: e.target.value })); checkConflict(newCandidate.date, e.target.value); }} />
               </div>
+              {/* 候補日ごとの営業メンバー選択（管理者のみ） */}
+              {isAdmin && salesUsers.length > 0 && (
+                <div className="form-group" style={{ marginBottom:8 }}>
+                  <div style={{ fontSize:'0.72rem', color:'var(--text-sub)', marginBottom:6, fontWeight:600, textTransform:'none', letterSpacing:0 }}>
+                    この候補日の営業メンバー
+                  </div>
+                  <button
+                    type="button"
+                    className={`picker-trigger${!newCandidate.sales_rep ? ' empty' : ''}`}
+                    onClick={() => setShowCandidateSalesPicker(true)}
+                  >
+                    <span className="picker-trigger-chips">
+                      {newCandidate.sales_rep
+                        ? <span className="picker-trigger-chip">{newCandidate.sales_rep}</span>
+                        : '営業メンバーを選択'}
+                    </span>
+                    <span className="picker-trigger-arrow">▼</span>
+                  </button>
+                  {showCandidateSalesPicker && (
+                    <StaffPicker
+                      title="この候補日の営業メンバー"
+                      members={salesUsers}
+                      value={newCandidate.sales_rep ? [newCandidate.sales_rep] : []}
+                      onChange={(names) => setNewCandidate(prev => ({ ...prev, sales_rep: names[0] || '' }))}
+                      onClose={() => setShowCandidateSalesPicker(false)}
+                      multi={false}
+                      addToast={addToast}
+                    />
+                  )}
+                </div>
+              )}
               {/* 候補日ごとのCS部員選択（管理者のみ） */}
               {isAdmin && csMembers.length > 0 && (
                 <div className="form-group" style={{ marginBottom:8 }}>
@@ -575,6 +619,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
               <div style={{ flex:1 }}>
                 <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:2 }}>{c.label}</div>
                 <div className="confirm-date">{formatCandDate(c)}</div>
+                {c.sales_rep && (
+                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginTop:3 }}>
+                    👤 {c.sales_rep}
+                  </div>
+                )}
                 {(c.cs_members || []).length > 0 && (
                   <div style={{ fontSize:'0.72rem',color:'var(--accent-lt)',marginTop:3 }}>
                     🛠 CS：{(c.cs_members || []).join('、')}

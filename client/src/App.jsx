@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+import { ThemeProvider, useTheme } from './hooks/useTheme';
 import { useToast, ToastContainer } from './hooks/useToast';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -12,6 +13,26 @@ const IconHome     = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentC
 const IconPlus     = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>;
 const IconCalendar = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>;
 const IconUsers    = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2"/><path d="M16 3.13a4 4 0 010 7.75"/><path d="M21 21v-2a4 4 0 00-3-3.87"/></svg>;
+const IconSun      = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} style={{ width: 18, height: 18 }}><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>;
+const IconMoon     = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} style={{ width: 18, height: 18 }}><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>;
+
+// ── ライト／ダークモード切り替えボタン ─────────────────────
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  const isLight = theme === 'light';
+  return (
+    <button
+      type="button"
+      className="btn btn-ghost btn-sm"
+      onClick={toggleTheme}
+      aria-label={isLight ? 'ダークモードに切り替え' : 'ライトモードに切り替え'}
+      title={isLight ? 'ダークモードに切り替え' : 'ライトモードに切り替え'}
+      style={{ padding: '4px 8px', display: 'flex', alignItems: 'center' }}
+    >
+      {isLight ? <IconMoon /> : <IconSun />}
+    </button>
+  );
+}
 
 // ── スプラッシュ（起動準備中）────────────────────────────────
 function SplashScreen() {
@@ -110,6 +131,7 @@ function AppInner() {
       <header className="topbar">
         <div className="topbar-logo"><span className="dot" />納品スケジューラー</div>
         <div className="topbar-right">
+          <ThemeToggle />
           <span style={{ fontSize: '0.82rem' }}>{user.name}</span>
           <button className="btn btn-ghost btn-sm" onClick={() => { logout(); setPage('dashboard'); }} style={{ padding: '4px 10px' }}>
             ログアウト
@@ -143,5 +165,9 @@ function AppInner() {
 }
 
 export default function App() {
-  return <AuthProvider><AppInner /></AuthProvider>;
+  return (
+    <ThemeProvider>
+      <AuthProvider><AppInner /></AuthProvider>
+    </ThemeProvider>
+  );
 }
