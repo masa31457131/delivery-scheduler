@@ -165,6 +165,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const handleAddCandidate = async (e) => {
     e.preventDefault();
     if (conflicts?.blocked || conflicts?.sales_reps?.length >= 2) { addToast('この日程は登録できません', 'error'); return; }
+    if (!(newCandidate.cs_members || []).length) { addToast('CS担当者を1名以上選択してください', 'error'); return; }
 
     // 編集モードでなければ希望日数の上限チェック
     if (!editingCandidateId) {
@@ -212,6 +213,9 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
     const currentCount = project.candidates?.length || 0;
     if (currentCount > maxDays) { addToast(`希望候補日数（${maxDays}日）を超えています。${currentCount - maxDays}件削除してください`, 'error'); return; }
     if (currentCount === 0) { addToast('候補日を1件以上登録してください', 'error'); return; }
+    // CS担当者必須チェック（すべての候補日に1名以上設定されているか）
+    const missingCs = (project.candidates || []).some(c => !(c.cs_members || []).length);
+    if (missingCs) { addToast('すべての候補日にCS担当者を1名以上設定してください', 'error'); return; }
     // 不足の場合はモーダルで理由入力 / ちょうどの場合は即確認
     if (currentCount < maxDays) {
       setShortageReason('');
@@ -542,11 +546,11 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                   )}
                 </div>
               )}
-              {/* 候補日ごとのCS部員選択（管理者のみ） */}
+              {/* 候補日ごとのCS部員選択（管理者のみ・必須） */}
               {isAdmin && csMembers.length > 0 && (
                 <div className="form-group" style={{ marginBottom:8 }}>
                   <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:6,fontWeight:600,textTransform:'none',letterSpacing:0 }}>
-                    この候補日のCS部員（任意・最大2名）
+                    この候補日のCS部員 *（1〜2名）
                   </div>
                   <button
                     type="button"
@@ -558,13 +562,13 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                         ? newCandidate.cs_members.map(name => (
                             <span key={name} className="picker-trigger-chip">{name}</span>
                           ))
-                        : 'CS部員を選択（任意）'}
+                        : 'CS部員を選択（必須）'}
                     </span>
                     <span className="picker-trigger-arrow">▼</span>
                   </button>
                   {showCandidateCsPicker && (
                     <StaffPicker
-                      title="この候補日のCS部員"
+                      title="この候補日のCS部員（必須）"
                       members={csMembers}
                       value={newCandidate.cs_members || []}
                       onChange={(names) => setNewCandidate(prev => ({ ...prev, cs_members: names }))}
@@ -594,7 +598,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
               <div style={{ display:'flex',gap:8 }}>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={handleCancelEdit}>キャンセル</button>
                 <button type="submit" className="btn btn-primary btn-sm"
-                  disabled={busy || conflicts?.blocked || conflicts?.sales_reps?.length >= 2}>
+                  disabled={busy || conflicts?.blocked || conflicts?.sales_reps?.length >= 2 || !(newCandidate.cs_members||[]).length}>
                   {editingCandidateId ? '修正を保存' : '追加する'}
                 </button>
               </div>

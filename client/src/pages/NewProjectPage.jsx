@@ -31,6 +31,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
     e.preventDefault();
     if (!form.project_type) { addToast('案件内容を選択してください', 'error'); return; }
     if (!form.client_name?.trim()) { addToast('顧客名を入力してください', 'error'); return; }
+    if (!form.memo?.trim()) { addToast('備考を入力してください', 'error'); return; }
     // sales_rep は営業ロールの場合 user.name を確実にセット（空文字対策）
     const sales_rep = (user.role === 'sales' || user.role === 'cs')
       ? user.name
@@ -147,7 +148,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
 
           <div className="form-group" style={{ marginBottom: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <label style={{ margin: 0 }}>備考</label>
+              <label style={{ margin: 0 }}>備考 *</label>
               <span style={{
                 fontSize: '0.75rem', fontWeight: 600,
                 color: memoLen >= 40 ? (memoLen >= 50 ? 'var(--danger)' : 'var(--warning)') : 'var(--text-sub)',
@@ -158,8 +159,9 @@ export default function NewProjectPage({ onSaved, addToast }) {
             <input
               value={form.memo}
               onChange={e => handleMemo(e.target.value)}
-              placeholder="簡潔に記載（50文字以内）"
+              placeholder="案件の概要を簡潔に記載（50文字以内）"
               maxLength={50}
+              required
             />
           </div>
         </div>
@@ -199,7 +201,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
         <button
           className="btn btn-primary btn-full"
           type="submit"
-          disabled={loading || !form.project_type || !form.client_name}
+          disabled={loading || !form.project_type || !form.client_name || !form.memo?.trim()}
         >
           {loading ? '登録中...' : '依頼を送信する'}
         </button>
