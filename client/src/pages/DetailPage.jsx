@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { useAuth } from '../hooks/useAuth';
 import { StatusBadge, formatDate, formatDateTime, STATUS_MAP } from '../components/StatusBadge';
+import StaffPicker from '../components/StaffPicker';
 
 const DELIVERY_LABELS = { remote: '🖥 リモート', onsite: '🚗 現地訪問' };
 
@@ -18,6 +19,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [editingCandidateId, setEditingCandidateId] = useState(null); // null=新規追加, id=編集中
   const [newCandidate, setNewCandidate] = useState({ date: '', date_to: '', time: '', cs_members: [] });
   const [conflicts, setConflicts] = useState(null);
+  const [showCandidateCsPicker, setShowCandidateCsPicker] = useState(false);
 
   // 確定モーダル（CS部員選択）
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -286,7 +288,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       {/* 確定モーダル（管理者用・CS部員は設定完了時に選択済み） */}
       {showConfirmModal && confirmTarget && (
         <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
-          <div style={{ background:'var(--navy-mid)',border:'1px solid var(--border)',borderRadius:16,padding:24,width:'100%',maxWidth:400 }}>
+          <div style={{ background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:20,padding:24,width:'100%',maxWidth:400 }}>
             <div style={{ fontWeight:700,fontSize:'1.1rem',marginBottom:16 }}>📅 スケジュールを確定</div>
 
             <div style={{ padding:'10px 12px',background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.25)',borderRadius:8,marginBottom:16 }}>
@@ -319,7 +321,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       {/* 設定完了モーダル（候補日不足時の理由入力） */}
       {showFinalizeModal && (
         <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
-          <div style={{ background:'var(--navy-mid)',border:'1px solid var(--border)',borderRadius:16,padding:24,width:'100%',maxWidth:400 }}>
+          <div style={{ background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:20,padding:24,width:'100%',maxWidth:400 }}>
             <div style={{ fontWeight:700,fontSize:'1.1rem',marginBottom:8,color:'var(--warning)' }}>
               ⚠️ 候補日が希望日数より少ない状態で設定完了します
             </div>
@@ -354,7 +356,7 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       {/* キャンセルモーダル */}
       {showCancelModal && (
         <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
-          <div style={{ background:'var(--navy-mid)',border:'1px solid var(--border)',borderRadius:16,padding:24,width:'100%',maxWidth:380 }}>
+          <div style={{ background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:20,padding:24,width:'100%',maxWidth:380 }}>
             <div style={{ fontWeight:700,fontSize:'1.1rem',marginBottom:8,color:'var(--danger)' }}>⚠️ キャンセル確認</div>
             <div style={{ fontSize:'0.82rem',color:'var(--text-sub)',marginBottom:16,lineHeight:1.6 }}>
               キャンセルすると元に戻せません。<br />再スケジュールが必要な場合は新規案件として再申請してください。
@@ -470,14 +472,22 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
                   ? `候補日を修正（希望候補日数：${maxDays}日）`
                   : `第${cands.length+1}候補を追加（希望候補日数：${maxDays}日）`}
               </div>
-              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:6 }}>
-                <div>
-                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>開始日 *</div>
+              <div className="date-range-row" style={{ marginBottom:6 }}>
+                <div className="date-range-field">
+                  <div className="date-range-field-label"><span>開始日 *</span></div>
                   <input type="date" value={newCandidate.date}
                     onChange={e => { setNewCandidate(c => ({ ...c, date: e.target.value })); checkConflict(e.target.value, newCandidate.time); }} required />
                 </div>
-                <div>
-                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:4 }}>終了日（期間指定の場合）</div>
+                <div className="date-range-field">
+                  <div className="date-range-field-label">
+                    <span>終了日（期間指定の場合）</span>
+                    {newCandidate.date_to && (
+                      <button type="button" className="date-range-clear-btn"
+                        onClick={() => setNewCandidate(c => ({ ...c, date_to: '' }))}>
+                        取消
+                      </button>
+                    )}
+                  </div>
                   <input type="date" value={newCandidate.date_to}
                     onChange={e => setNewCandidate(c => ({ ...c, date_to: e.target.value }))}
                     min={newCandidate.date} />
@@ -490,41 +500,35 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
               </div>
               {/* 候補日ごとのCS部員選択（管理者のみ） */}
               {isAdmin && csMembers.length > 0 && (
-                <div style={{ marginBottom:8 }}>
-                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:6,fontWeight:600 }}>
+                <div className="form-group" style={{ marginBottom:8 }}>
+                  <div style={{ fontSize:'0.72rem',color:'var(--text-sub)',marginBottom:6,fontWeight:600,textTransform:'none',letterSpacing:0 }}>
                     この候補日のCS部員（任意・最大2名）
                   </div>
-                  <div style={{ display:'flex',flexDirection:'column',gap:4 }}>
-                    {csMembers.map(m => {
-                      const checked = (newCandidate.cs_members || []).includes(m.display_name);
-                      return (
-                        <label key={m.id} style={{
-                          display:'flex',alignItems:'center',gap:8,padding:'6px 10px',borderRadius:6,cursor:'pointer',
-                          background: checked ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.03)',
-                          border:`1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
-                        }}>
-                          <input type="checkbox" checked={checked}
-                            onChange={() => {
-                              setNewCandidate(prev => {
-                                const cur = prev.cs_members || [];
-                                if (cur.includes(m.display_name)) {
-                                  return { ...prev, cs_members: cur.filter(n => n !== m.display_name) };
-                                }
-                                if (cur.length >= 2) { addToast('CS部員は最大2名まで選択できます', 'error'); return prev; }
-                                return { ...prev, cs_members: [...cur, m.display_name] };
-                              });
-                            }}
-                            style={{ width:'auto',margin:0 }} />
-                          <span style={{ flex:1,fontSize:'0.85rem' }}>{m.display_name}</span>
-                          <span style={{ fontSize:'0.65rem',padding:'1px 6px',borderRadius:99,background:'rgba(59,130,246,0.12)',color:'var(--accent-lt)' }}>📍{m.area}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {(newCandidate.cs_members || []).length > 0 && (
-                    <div style={{ fontSize:'0.72rem',color:'var(--accent-lt)',marginTop:4 }}>
-                      選択中：{(newCandidate.cs_members || []).join('、')}
-                    </div>
+                  <button
+                    type="button"
+                    className={`picker-trigger${(newCandidate.cs_members||[]).length === 0 ? ' empty' : ''}`}
+                    onClick={() => setShowCandidateCsPicker(true)}
+                  >
+                    <span className="picker-trigger-chips">
+                      {(newCandidate.cs_members || []).length > 0
+                        ? newCandidate.cs_members.map(name => (
+                            <span key={name} className="picker-trigger-chip">{name}</span>
+                          ))
+                        : 'CS部員を選択（任意）'}
+                    </span>
+                    <span className="picker-trigger-arrow">▼</span>
+                  </button>
+                  {showCandidateCsPicker && (
+                    <StaffPicker
+                      title="この候補日のCS部員"
+                      members={csMembers}
+                      value={newCandidate.cs_members || []}
+                      onChange={(names) => setNewCandidate(prev => ({ ...prev, cs_members: names }))}
+                      onClose={() => setShowCandidateCsPicker(false)}
+                      multi={true}
+                      max={2}
+                      addToast={addToast}
+                    />
                   )}
                 </div>
               )}

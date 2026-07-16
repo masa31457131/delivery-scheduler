@@ -75,8 +75,8 @@ function UsersTab({ addToast }) {
       {showForm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200,
           display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: 'var(--navy-mid)', border: '1px solid var(--border)',
-            borderRadius: 16, padding: 24, width: '100%', maxWidth: 380 }}>
+          <div style={{ background: 'var(--glass-bg)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', border: '1px solid var(--glass-border)',
+            borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
             <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>
               {editTarget ? '営業担当を編集' : '営業担当を追加'}
             </div>
@@ -213,8 +213,8 @@ function CsMembersTab({ addToast }) {
       {showForm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200,
           display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: 'var(--navy-mid)', border: '1px solid var(--border)',
-            borderRadius: 16, padding: 24, width: '100%', maxWidth: 380 }}>
+          <div style={{ background: 'var(--glass-bg)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', border: '1px solid var(--glass-border)',
+            borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
             <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>
               {editTarget ? 'CS部員を編集' : 'CS部員を追加'}
             </div>
@@ -347,8 +347,8 @@ function AdminsTab({ addToast }) {
       {showForm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200,
           display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: 'var(--navy-mid)', border: '1px solid var(--border)',
-            borderRadius: 16, padding: 24, width: '100%', maxWidth: 380 }}>
+          <div style={{ background: 'var(--glass-bg)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', border: '1px solid var(--glass-border)',
+            borderRadius: 20, padding: 24, width: '100%', maxWidth: 380 }}>
             <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>
               {editTarget ? '管理者情報を編集' : '管理者を追加'}
             </div>
