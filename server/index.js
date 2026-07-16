@@ -772,9 +772,9 @@ app.get('/api/projects/:id', async (req, res) => {
 // 新規登録
 app.post('/api/projects', async (req, res) => {
   const { client_name, project_type, sales_rep, memo, delivery_method, candidate_days } = req.body;
-  if (!client_name?.trim() || !project_type?.trim() || !sales_rep?.trim()) {
-    console.error('[POST /projects] 必須項目不足:', { client_name, project_type, sales_rep });
-    return res.status(400).json({ error: '必須項目が不足しています' });
+  if (!client_name?.trim() || !project_type?.trim() || !sales_rep?.trim() || !memo?.trim()) {
+    console.error('[POST /projects] 必須項目不足:', { client_name, project_type, sales_rep, memo });
+    return res.status(400).json({ error: '必須項目が不足しています（備考は必須です）' });
   }
   if (memo && memo.length > 50) return res.status(400).json({ error: '備考は50文字以内で入力してください' });
   const id = uuidv4();
@@ -829,6 +829,8 @@ app.put('/api/projects/:id', async (req, res) => {
 app.post('/api/projects/:id/candidates', async (req, res) => {
   const { date, date_to, time, cs_members, sales_rep } = req.body;
   if (!date) return res.status(400).json({ error: '日付は必須です' });
+  if (!cs_members || !cs_members.length) return res.status(400).json({ error: 'CS担当者を1名以上選択してください' });
+  if (cs_members.length > 2) return res.status(400).json({ error: 'CS担当者は最大2名までです' });
   const { rows: existing } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!existing[0]) return res.status(404).json({ error: '案件が見つかりません' });
   const maxDays = existing[0].candidate_days || 1;
@@ -853,6 +855,9 @@ app.post('/api/projects/:id/candidates', async (req, res) => {
 app.put('/api/projects/:id/candidates/:candidateId', async (req, res) => {
   const { date, date_to, time, cs_members, sales_rep } = req.body;
   if (!date) return res.status(400).json({ error: '日付は必須です' });
+  if (cs_members !== undefined && (!cs_members.length || cs_members.length > 2)) {
+    return res.status(400).json({ error: 'CS担当者は1〜2名で選択してください' });
+  }
   const { rows } = await pool.query('SELECT * FROM schedule_candidates WHERE id=$1 AND project_id=$2', [req.params.candidateId, req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '候補日が見つかりません' });
   const csMembersJson = cs_members !== undefined ? JSON.stringify(cs_members) : rows[0].cs_members;
@@ -889,6 +894,11 @@ app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
   if (cands.length === 0) return res.status(400).json({ error: '候補日が1件も登録されていません' });
   const maxDays = p.candidate_days || 1;
   if (cands.length > maxDays) return res.status(400).json({ error: `希望候補日数（${maxDays}日）を超えています。${cands.length - maxDays}件削除してください。` });
+  // すべての候補日にCS担当者が1名以上設定されているか（仮スケジュール決定時の必須条件）
+  const missingCs = cands.some(c => {
+    try { return JSON.parse(c.cs_members || '[]').length === 0; } catch { return true; }
+  });
+  if (missingCs) return res.status(400).json({ error: 'すべての候補日にCS担当者を1名以上設定してください' });
   // 候補日不足の場合も shortage_reason が入力済みであれば完了できる（フロントで事前に保存）
 
   await pool.query("UPDATE projects SET status='scheduled', updated_at=NOW() WHERE id=$1", [req.params.id]);
