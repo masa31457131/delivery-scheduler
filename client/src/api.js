@@ -49,6 +49,7 @@ export const api = {
   deleteCandidate: (projectId, candidateId) => req('DELETE', `/projects/${projectId}/candidates/${candidateId}`),
   finalizeCandidates: (projectId) => req('POST', `/projects/${projectId}/candidates/finalize`),
   confirmSchedule: (id, data) => req('POST', `/projects/${id}/confirm-schedule`, data),
+  updateConfirmedCsMembers: (id, cs_members) => req('PUT', `/projects/${id}/cs-members`, { cs_members }),
   cancelProject: (id, data) => req('POST', `/projects/${id}/cancel`, data),
   sendReminder: (id, requesterLoginId) => req('POST', `/projects/${id}/remind`, { requester_login_id: requesterLoginId }),
   deleteProject: (id, requesterLoginId) => req('DELETE', `/projects/${id}${requesterLoginId ? `?requester_login_id=${encodeURIComponent(requesterLoginId)}` : ''}`),

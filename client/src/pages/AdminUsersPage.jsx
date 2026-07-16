@@ -688,6 +688,7 @@ const TEMPLATE_LABELS = {
   reminder:            { label: '🔔 リマインド', desc: '営業がリマインドボタンを押したとき' },
   auto_cancel_warning: { label: '⚠️ 自動キャンセル警告', desc: '強制キャンセル前日の通知' },
   auto_cancelled:      { label: '⏰ 自動キャンセル通知', desc: '10営業日経過で自動キャンセルされたとき' },
+  cs_members_changed:  { label: '🔁 CS担当変更', desc: '管理者が確定済み案件のCS担当者を変更したとき' },
 };
 const AVAILABLE_VARS = {
   schedule_proposed:   ['case_id', 'project_type', 'client_name', 'sales_rep', 'delivery_method', 'candidate_days', 'memo', 'detail_url'],
@@ -697,6 +698,7 @@ const AVAILABLE_VARS = {
   reminder:            ['case_id', 'project_type', 'client_name', 'sales_rep', 'candidate_days', 'created_at', 'detail_url'],
   auto_cancel_warning: ['case_id', 'project_type', 'client_name', 'sales_rep', 'deadline_date', 'detail_url'],
   auto_cancelled:      ['case_id', 'project_type', 'client_name', 'sales_rep', 'detail_url'],
+  cs_members_changed:  ['case_id', 'project_type', 'client_name', 'sales_rep', 'confirmed_date', 'old_cs_members', 'new_cs_members', 'detail_url'],
 };
 
 function TemplatesTab({ addToast }) {

@@ -35,6 +35,10 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
 
+  // 確定済み案件のCS担当者変更（管理者専用）
+  const [showEditCsPicker, setShowEditCsPicker] = useState(false);
+  const [editingCs, setEditingCs] = useState(false);
+
   const load = () => {
     setLoading(true);
     api.getProject(projectId).then(p => {
@@ -133,6 +137,19 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       addToast('リマインドメールを送信しました');
     } catch (err) { addToast(err.message, 'error'); }
     finally { setBusy(false); }
+  };
+
+  // 確定済み案件のCS担当者を変更（管理者専用・変更通知メール送信）
+  const handleUpdateConfirmedCs = async (names) => {
+    if (!names.length) { addToast('CS担当者を1名以上選択してください', 'error'); return; }
+    setEditingCs(true);
+    try {
+      const updated = await api.updateConfirmedCsMembers(projectId, names);
+      setProject(p => ({ ...p, ...updated }));
+      addToast('CS担当者を変更し、変更通知メールを送信しました');
+      onRefresh();
+    } catch (err) { addToast(err.message, 'error'); }
+    finally { setEditingCs(false); }
   };
 
   const checkConflict = async (date, time) => {
@@ -401,11 +418,36 @@ export default function DetailPage({ projectId, onBack, addToast, onRefresh }) {
       {isConfirmed && project.confirmed_date && (
         <div className="confirmed-banner">
           <span style={{ fontSize:'1.2rem' }}>✅</span>
-          <div>
+          <div style={{ flex:1 }}>
             <div style={{ fontSize:'0.72rem',color:'var(--success)',marginBottom:2 }}>確定日</div>
             <div className="date-text">{formatDateTime(project.confirmed_date)}</div>
             {(project.cs_members||[]).length > 0 && (
               <div style={{ fontSize:'0.75rem',color:'var(--success)',marginTop:2 }}>CS担当：{project.cs_members.join('、')}</div>
+            )}
+            {isAdmin && (
+              <div style={{ marginTop:8 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowEditCsPicker(true)}
+                  disabled={editingCs}
+                  style={{ borderColor:'rgba(16,185,129,0.4)',color:'var(--success)' }}
+                >
+                  🛠 CS担当者を変更
+                </button>
+                {showEditCsPicker && (
+                  <StaffPicker
+                    title="CS担当者を変更（変更通知メールを送信します）"
+                    members={csMembers}
+                    value={project.cs_members || []}
+                    onChange={handleUpdateConfirmedCs}
+                    onClose={() => setShowEditCsPicker(false)}
+                    multi={true}
+                    max={2}
+                    addToast={addToast}
+                  />
+                )}
+              </div>
             )}
           </div>
         </div>
