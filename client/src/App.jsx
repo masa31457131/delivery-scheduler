@@ -103,6 +103,28 @@ function AppInner() {
     return () => { cancelled = true; };
   }, []);
 
+  // メール内リンク（?p=案件ID）を検知し、ログイン後に自動でその案件を開けるよう保存
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pendingId = params.get('p');
+    if (pendingId) {
+      sessionStorage.setItem('ds_pending_detail', pendingId);
+      // URLをきれいにする（再読み込み時に誤って再検知しないように）
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
+  // ログイン済みになったタイミングで、保留中の案件詳細へ自動遷移
+  useEffect(() => {
+    if (!user) return;
+    const pendingId = sessionStorage.getItem('ds_pending_detail');
+    if (pendingId) {
+      setPage('detail');
+      setDetailId(pendingId);
+      sessionStorage.removeItem('ds_pending_detail');
+    }
+  }, [user]);
+
   // 初回確認中（null）はごく短時間なので空表示
   if (serverReady === null) return null;
   // サーバー未応答 → スプラッシュ継続
