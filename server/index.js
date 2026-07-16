@@ -412,7 +412,8 @@ async function initDB() {
         candidate_date_to TEXT DEFAULT '',
         candidate_time    TEXT DEFAULT '',
         label             TEXT,
-        cs_members        TEXT DEFAULT '[]'
+        cs_members        TEXT DEFAULT '[]',
+        sales_rep         TEXT DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS blocked_dates (
         id         TEXT PRIMARY KEY,
@@ -453,6 +454,12 @@ async function initDB() {
     await client.query(`ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS area TEXT NOT NULL DEFAULT '東京'`);
     await client.query(`ALTER TABLE schedule_candidates ADD COLUMN IF NOT EXISTS candidate_date_to TEXT DEFAULT ''`);
     await client.query(`ALTER TABLE schedule_candidates ADD COLUMN IF NOT EXISTS cs_members TEXT DEFAULT '[]'`);
+    await client.query(`ALTER TABLE schedule_candidates ADD COLUMN IF NOT EXISTS sales_rep TEXT DEFAULT ''`);
+    // 既存の候補日に sales_rep が未設定の場合、案件の担当営業を初期値として引き継ぐ
+    await client.query(`
+      UPDATE schedule_candidates sc SET sales_rep = p.sales_rep
+      FROM projects p WHERE sc.project_id = p.id AND (sc.sales_rep IS NULL OR sc.sales_rep = '')
+    `).catch(() => {});
     await client.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS case_id TEXT`);
     // 既存の case_id が NULL のプロジェクトに連番IDを付与（後方互換）
     await client.query(`
@@ -821,7 +828,7 @@ app.put('/api/projects/:id', async (req, res) => {
 
 // 候補日 追加（希望日数上限チェック・ステータスはfinalizeまでpending維持）
 app.post('/api/projects/:id/candidates', async (req, res) => {
-  const { date, date_to, time, cs_members } = req.body;
+  const { date, date_to, time, cs_members, sales_rep } = req.body;
   if (!date) return res.status(400).json({ error: '日付は必須です' });
   const { rows: existing } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!existing[0]) return res.status(404).json({ error: '案件が見つかりません' });
@@ -831,9 +838,11 @@ app.post('/api/projects/:id/candidates', async (req, res) => {
     return res.status(400).json({ error: `希望候補日数は${maxDays}日です。${maxDays}件を超えて登録できません。` });
   }
   const csMembersJson = JSON.stringify(cs_members || []);
+  // 営業メンバー未指定の場合は案件の担当営業を初期値として使用
+  const salesRepVal = (sales_rep && sales_rep.trim()) ? sales_rep : existing[0].sales_rep;
   await pool.query(
-    'INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_date_to,candidate_time,label,cs_members) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-    [uuidv4(), req.params.id, date, date_to || '', time || '', `第${cands.length+1}候補`, csMembersJson]
+    'INSERT INTO schedule_candidates (id,project_id,candidate_date,candidate_date_to,candidate_time,label,cs_members,sales_rep) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [uuidv4(), req.params.id, date, date_to || '', time || '', `第${cands.length+1}候補`, csMembersJson, salesRepVal]
   );
   // ステータスはfinalizeまでpendingのまま維持（scheduledには変更しない）
   await pool.query('UPDATE projects SET updated_at=NOW() WHERE id=$1', [req.params.id]);
@@ -843,14 +852,15 @@ app.post('/api/projects/:id/candidates', async (req, res) => {
 
 // 候補日 編集（管理者が設定済みの候補日を修正）
 app.put('/api/projects/:id/candidates/:candidateId', async (req, res) => {
-  const { date, date_to, time, cs_members } = req.body;
+  const { date, date_to, time, cs_members, sales_rep } = req.body;
   if (!date) return res.status(400).json({ error: '日付は必須です' });
   const { rows } = await pool.query('SELECT * FROM schedule_candidates WHERE id=$1 AND project_id=$2', [req.params.candidateId, req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '候補日が見つかりません' });
   const csMembersJson = cs_members !== undefined ? JSON.stringify(cs_members) : rows[0].cs_members;
+  const salesRepVal = sales_rep !== undefined && sales_rep.trim() ? sales_rep : rows[0].sales_rep;
   await pool.query(
-    'UPDATE schedule_candidates SET candidate_date=$1, candidate_date_to=$2, candidate_time=$3, cs_members=$4 WHERE id=$5',
-    [date, date_to || '', time || '', csMembersJson, req.params.candidateId]
+    'UPDATE schedule_candidates SET candidate_date=$1, candidate_date_to=$2, candidate_time=$3, cs_members=$4, sales_rep=$5 WHERE id=$6',
+    [date, date_to || '', time || '', csMembersJson, salesRepVal, req.params.candidateId]
   );
   await pool.query('UPDATE projects SET updated_at=NOW() WHERE id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM schedule_candidates WHERE project_id=$1 ORDER BY candidate_date', [req.params.id]);
@@ -917,7 +927,7 @@ app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
 
 // 仮スケジュールを確定（CS部員選択・不足理由）
 app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
-  const { confirmed_date, confirmed_time, cs_members, shortage_reason } = req.body;
+  const { confirmed_date, confirmed_time, cs_members, shortage_reason, sales_rep } = req.body;
   if (!confirmed_date) return res.status(400).json({ error: '確定日を選択してください' });
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
@@ -925,22 +935,24 @@ app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
   const fullDate = confirmed_time ? `${confirmed_date} ${confirmed_time}` : confirmed_date;
   const csMembersArr = cs_members || p.cs_members || [];
   const csMembersJson = JSON.stringify(csMembersArr);
+  // 候補日ごとに営業メンバーが指定されていれば、確定時に案件の担当営業として引き継ぐ
+  const salesRepVal = (sales_rep && sales_rep.trim()) ? sales_rep : p.sales_rep;
 
   // 不足理由は finalize 時に既に保存済み（confirm-schedule 時点では不要）
 
   await pool.query(
-    `UPDATE projects SET confirmed_date=$1, status='confirmed', scheduled_at=NOW(), updated_at=NOW(), cs_members=$2, shortage_reason=$3 WHERE id=$4`,
-    [fullDate, csMembersJson, shortage_reason || '', req.params.id]
+    `UPDATE projects SET confirmed_date=$1, status='confirmed', scheduled_at=NOW(), updated_at=NOW(), cs_members=$2, shortage_reason=$3, sales_rep=$4 WHERE id=$5`,
+    [fullDate, csMembersJson, shortage_reason || '', salesRepVal, req.params.id]
   );
   await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [req.params.id]);
   const { rows: updated } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
   const project = { ...parseProject(updated[0]), candidates: [] };
 
-  const allTo = await buildRecipients(p.sales_rep, csMembersArr);
+  const allTo = await buildRecipients(salesRepVal, csMembersArr);
   if (allTo.length) {
     const shortageReasonLine = shortage_reason?.trim() ? `不足理由：${shortage_reason.trim()}` : '';
     await sendTemplatedEmail('schedule_confirmed', allTo, {
-      case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+      case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: salesRepVal,
       delivery_method: DELIVERY_LABEL(p.delivery_method),
       cs_members: csMembersArr.length ? csMembersArr.join('、') : 'なし',
       confirmed_date: fullDate, shortage_reason_line: shortageReasonLine,
