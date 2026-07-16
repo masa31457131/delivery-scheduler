@@ -19,6 +19,13 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
+// ── アプリのベースURL（メール内の直接リンク生成に使用） ────────
+const APP_BASE_URL = (process.env.APP_BASE_URL || 'https://delivery-scheduler-c4cd.onrender.com').replace(/\/$/, '');
+// 案件の詳細ページへの直接リンクを生成（ログイン後に自動でその案件を開く）
+function buildDetailUrl(projectId) {
+  return `${APP_BASE_URL}/?p=${projectId}`;
+}
+
 // ── Email helpers ─────────────────────────────────────────────
 async function getEmailSettings() {
   const { rows } = await pool.query("SELECT value FROM settings WHERE key='email_settings'");
@@ -113,8 +120,7 @@ const DEFAULT_TEMPLATES = {
 
 候補日をカレンダーで確認して設定してください。
 
-▼ 納品スケジューラー
-https://delivery-scheduler-c4cd.onrender.com`
+▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
   },
   candidates_set: {
     subject: '【仮スケジュール設定完了】{{project_type}}（{{client_name}}）',
@@ -132,8 +138,7 @@ CS担当者：{{cs_members}}
 
 担当営業は候補日の中から日程を確定してください。
 
-▼ 納品スケジューラー
-https://delivery-scheduler-c4cd.onrender.com`
+▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
   },
   schedule_confirmed: {
     subject: '【日程確定】{{project_type}}（{{client_name}}）',
@@ -150,8 +155,7 @@ https://delivery-scheduler-c4cd.onrender.com`
 
 日程が確定しました。準備をお願いします。
 
-▼ 納品スケジューラー
-https://delivery-scheduler-c4cd.onrender.com`
+▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
   },
   schedule_cancelled: {
     subject: '【キャンセル】{{project_type}}（{{client_name}}）',
@@ -167,8 +171,7 @@ https://delivery-scheduler-c4cd.onrender.com`
 
 再スケジュールが必要な場合は新規案件として再申請してください。
 
-▼ 納品スケジューラー
-https://delivery-scheduler-c4cd.onrender.com`
+▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
   },
   reminder: {
     subject: '【リマインド】仮スケジュール日程未設定：{{project_type}}（{{client_name}}）',
@@ -183,8 +186,7 @@ https://delivery-scheduler-c4cd.onrender.com`
 
 候補日が未設定のままです。早急にスケジュールを設定してください。
 
-▼ 納品スケジューラー
-https://delivery-scheduler-c4cd.onrender.com`
+▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
   },
   auto_cancel_warning: {
     subject: '【警告】明日自動キャンセル予定：{{project_type}}（{{client_name}}）',
@@ -198,8 +200,7 @@ https://delivery-scheduler-c4cd.onrender.com`
 
 本日中にスケジュールを確定するか、担当者に連絡してください。
 
-▼ 納品スケジューラー
-https://delivery-scheduler-c4cd.onrender.com`
+▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
   },
   auto_cancelled: {
     subject: '【自動キャンセル】{{project_type}}（{{client_name}}）',
@@ -212,8 +213,7 @@ https://delivery-scheduler-c4cd.onrender.com`
 
 再スケジュールが必要な場合は新規案件として再申請してください。
 
-▼ 納品スケジューラー
-https://delivery-scheduler-c4cd.onrender.com`
+▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
   },
 };
 
@@ -227,8 +227,14 @@ function renderTemplate(str, vars) {
   return (str || '').replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
 }
 
-function textToHtml(title, bodyText) {
+function textToHtml(title, bodyText, ctaUrl) {
   const bodyHtml = (bodyText || '').split('\n').map(l => l.trim() === '' ? '<br>' : `<div style="margin:2px 0">${l}</div>`).join('');
+  const ctaHtml = ctaUrl ? `
+    <div style="padding:4px 28px 28px">
+      <a href="${ctaUrl}" style="display:block;text-align:center;background:#3b82f6;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:14px 20px;border-radius:10px">
+        この案件を確認する →
+      </a>
+    </div>` : '';
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f7fa;font-family:'Helvetica Neue',Arial,sans-serif">
   <div style="max-width:520px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
     <div style="background:#1a2332;padding:24px 28px">
@@ -236,6 +242,7 @@ function textToHtml(title, bodyText) {
       <div style="color:#fff;font-size:18px;font-weight:700">${title}</div>
     </div>
     <div style="padding:24px 28px;font-size:14px;color:#333;line-height:1.8">${bodyHtml}</div>
+    ${ctaHtml}
   </div></body></html>`;
 }
 
@@ -245,7 +252,7 @@ async function sendTemplatedEmail(templateKey, to, vars) {
   if (!tpl) { console.log('[Email skipped - no template]', templateKey); return { skipped: true }; }
   const subject = renderTemplate(tpl.subject, vars);
   const bodyText = renderTemplate(tpl.body, vars);
-  const html = textToHtml(subject, bodyText);
+  const html = textToHtml(subject, bodyText, vars?.detail_url);
   return sendEmail({ to, subject, html });
 }
 
@@ -785,6 +792,7 @@ app.post('/api/projects', async (req, res) => {
       case_id: project.case_id || '', project_type, client_name, sales_rep,
       delivery_method: DELIVERY_LABEL(delivery_method),
       candidate_days: candidate_days || 1, memo: memo || 'なし',
+      detail_url: buildDetailUrl(project.id),
     });
     if (result?.error) console.error('[新規依頼メール送信エラー]', result.error);
   }
@@ -911,6 +919,7 @@ app.post('/api/projects/:id/candidates/finalize', async (req, res) => {
       delivery_method: DELIVERY_LABEL(p.delivery_method),
       cs_members: csDisplay,
       candidate_list: dateLines,
+      detail_url: buildDetailUrl(p.id),
     });
   }
   res.json({ ...parseProject(updatedProject[0]), candidates: cands.map(c => ({ ...c, cs_members: JSON.parse(c.cs_members || '[]') })) });
@@ -947,6 +956,7 @@ app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
       delivery_method: DELIVERY_LABEL(p.delivery_method),
       cs_members: csMembersArr.length ? csMembersArr.join('、') : 'なし',
       confirmed_date: fullDate, shortage_reason_line: shortageReasonLine,
+      detail_url: buildDetailUrl(p.id),
     });
   }
   res.json(project);
@@ -969,6 +979,7 @@ app.post('/api/projects/:id/cancel', async (req, res) => {
       confirmed_date: p.confirmed_date || '未確定',
       cs_members: (p.cs_members && p.cs_members.length) ? p.cs_members.join('、') : 'なし',
       cancel_reason: reason.trim(),
+      detail_url: buildDetailUrl(p.id),
     });
   }
   res.json({ ...parseProject(updated[0]), candidates: [] });
@@ -995,6 +1006,7 @@ app.post('/api/projects/:id/remind', async (req, res) => {
     case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
     candidate_days: p.candidate_days || 1,
     created_at: p.created_at ? new Date(p.created_at).toLocaleDateString('ja-JP') : '—',
+    detail_url: buildDetailUrl(p.id),
   });
   if (result?.error) return res.status(500).json({ error: result.error });
   if (result?.skipped) return res.status(400).json({ error: 'メール送信設定（Gmail/Resend）が未完了です' });
@@ -1016,10 +1028,10 @@ async function runAutoCancel() {
         await pool.query(`UPDATE projects SET status='cancelled', cancel_reason='未確定のため（自動キャンセル）', updated_at=NOW() WHERE id=$1`, [p.id]);
         await pool.query('DELETE FROM schedule_candidates WHERE project_id=$1', [p.id]);
         const allTo = await buildRecipients(p.sales_rep, p.cs_members);
-        if (allTo.length) await sendTemplatedEmail('auto_cancelled', allTo, { case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep });
+        if (allTo.length) await sendTemplatedEmail('auto_cancelled', allTo, { case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep, detail_url: buildDetailUrl(p.id) });
       } else if (todayStr === warningStr) {
         const allTo = await buildRecipients(p.sales_rep, p.cs_members);
-        if (allTo.length) await sendTemplatedEmail('auto_cancel_warning', allTo, { case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep, deadline_date: deadlineStr });
+        if (allTo.length) await sendTemplatedEmail('auto_cancel_warning', allTo, { case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep, deadline_date: deadlineStr, detail_url: buildDetailUrl(p.id) });
       }
     }
   } catch (e) { console.error('[AutoCancel error]', e.message); }
