@@ -215,6 +215,22 @@ CS担当者：{{cs_members}}
 
 ▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
   },
+  cs_members_changed: {
+    subject: '【CS担当変更】{{project_type}}（{{client_name}}）',
+    body: `確定済み案件のCS担当者が変更されました。
+
+案件内容：{{project_type}}
+顧客名：{{client_name}}
+案件ID：{{case_id}}
+担当営業：{{sales_rep}}
+確定日時：{{confirmed_date}}
+変更前のCS担当：{{old_cs_members}}
+変更後のCS担当：{{new_cs_members}}
+
+引き継ぎが必要な場合は担当者間でご連絡ください。
+
+▼ 下のボタンからこの案件をすぐに確認できます（ログイン後、自動でこの案件が開きます）`
+  },
 };
 
 async function getEmailTemplates() {
@@ -966,6 +982,38 @@ app.post('/api/projects/:id/confirm-schedule', async (req, res) => {
       delivery_method: DELIVERY_LABEL(p.delivery_method),
       cs_members: csMembersArr.length ? csMembersArr.join('、') : 'なし',
       confirmed_date: fullDate, shortage_reason_line: shortageReasonLine,
+      detail_url: buildDetailUrl(p.id),
+    });
+  }
+  res.json(project);
+});
+
+// 確定済み案件のCS担当者を変更（管理者のみ・変更通知メール送信）
+app.put('/api/projects/:id/cs-members', async (req, res) => {
+  const { cs_members } = req.body;
+  if (!cs_members || !cs_members.length) return res.status(400).json({ error: 'CS担当者を1名以上選択してください' });
+  if (cs_members.length > 2) return res.status(400).json({ error: 'CS担当者は最大2名までです' });
+  const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: '案件が見つかりません' });
+  const p = parseProject(rows[0]);
+  if (p.status !== 'confirmed') return res.status(400).json({ error: '確定済みの案件のみCS担当者を変更できます' });
+
+  const oldCsMembers = p.cs_members || [];
+  const newCsMembers = cs_members;
+
+  await pool.query('UPDATE projects SET cs_members=$1, updated_at=NOW() WHERE id=$2', [JSON.stringify(newCsMembers), req.params.id]);
+  const { rows: updated } = await pool.query('SELECT * FROM projects WHERE id=$1', [req.params.id]);
+  const project = { ...parseProject(updated[0]), candidates: [] };
+
+  // 変更前後どちらのCS部員にも通知（引き継ぎ漏れ防止）
+  const notifyCsNames = [...new Set([...oldCsMembers, ...newCsMembers])];
+  const allTo = await buildRecipients(p.sales_rep, notifyCsNames);
+  if (allTo.length) {
+    await sendTemplatedEmail('cs_members_changed', allTo, {
+      case_id: p.case_id || '', project_type: p.project_type, client_name: p.client_name, sales_rep: p.sales_rep,
+      confirmed_date: p.confirmed_date || '—',
+      old_cs_members: oldCsMembers.length ? oldCsMembers.join('、') : 'なし',
+      new_cs_members: newCsMembers.length ? newCsMembers.join('、') : 'なし',
       detail_url: buildDetailUrl(p.id),
     });
   }
