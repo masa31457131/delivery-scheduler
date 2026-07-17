@@ -592,8 +592,17 @@ app.post('/api/users', async (req, res) => {
   res.status(201).json({ id, display_name, login_id, role: 'sales', email: email || '', area: area || '東京' });
 });
 app.put('/api/users/:id', async (req, res) => {
-  // 管理者は営業担当の情報を修正できない（追加・削除のみ許可）
-  return res.status(403).json({ error: '管理者は営業担当の情報を修正できません（追加・削除のみ可能です）' });
+  const { display_name, login_id, password, email, area } = req.body;
+  const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'ユーザーが見つかりません' });
+  if (rows[0].role === 'admin') return res.status(403).json({ error: '管理者はこのAPIから変更できません' });
+  if (login_id) {
+    const dup = await pool.query('SELECT id FROM users WHERE login_id=$1 AND id!=$2', [login_id, req.params.id]);
+    if (dup.rows[0]) return res.status(400).json({ error: 'このログインIDはすでに使われています' });
+  }
+  await upsertUser(req.params.id, { display_name, login_id, password, email, area });
+  const { rows: u } = await pool.query('SELECT id,display_name,login_id,email,area FROM users WHERE id=$1', [req.params.id]);
+  res.json(u[0]);
 });
 app.delete('/api/users/:id', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [req.params.id]);
