@@ -9,7 +9,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
   const { user } = useAuth();
   const [form, setForm] = useState({
     client_name: '',
-    project_type: '',
+    project_type: [],
     sales_rep: user.role === 'sales' ? user.name : '',
     memo: '',
     delivery_method: 'remote',
@@ -23,13 +23,24 @@ export default function NewProjectPage({ onSaved, addToast }) {
 
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  const toggleProjectType = (type) => {
+    setForm(f => {
+      const has = f.project_type.includes(type);
+      // PROJECT_TYPES の並び順を維持したまま追加・削除する
+      const next = has
+        ? f.project_type.filter(t => t !== type)
+        : PROJECT_TYPES.filter(t => f.project_type.includes(t) || t === type);
+      return { ...f, project_type: next };
+    });
+  };
+
   const handleMemo = (v) => {
     if (v.length <= 50) setField('memo', v);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.project_type) { addToast('案件内容を選択してください', 'error'); return; }
+    if (!form.project_type.length) { addToast('案件内容を1つ以上選択してください', 'error'); return; }
     if (!form.client_name?.trim()) { addToast('顧客名を入力してください', 'error'); return; }
     if (!form.memo?.trim()) { addToast('備考を入力してください', 'error'); return; }
     // sales_rep は営業ロールの場合 user.name を確実にセット（空文字対策）
@@ -39,7 +50,9 @@ export default function NewProjectPage({ onSaved, addToast }) {
     if (!sales_rep?.trim()) { addToast('担当営業を選択してください', 'error'); return; }
     setLoading(true);
     try {
-      await api.createProject({ ...form, sales_rep, candidates: [] });
+      // 複数選択された案件内容は「・」区切りの1つの文字列として保存する
+      const project_type = form.project_type.join('・');
+      await api.createProject({ ...form, project_type, sales_rep, candidates: [] });
       addToast('案件を登録しました');
       onSaved();
     } catch (err) {
@@ -70,25 +83,28 @@ export default function NewProjectPage({ onSaved, addToast }) {
           </div>
 
           <div className="form-group">
-            <label>案件内容 *</label>
+            <label>案件内容 *（複数選択可）</label>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 4 }}>
-              {PROJECT_TYPES.map(type => (
-                <label key={type} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  cursor: 'pointer', padding: '10px 12px', borderRadius: 8,
-                  background: form.project_type === type ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
-                  border: `1px solid ${form.project_type === type ? 'var(--accent)' : 'var(--border)'}`,
-                  transition: 'all 0.15s',
-                }}>
-                  <input
-                    type="radio" name="project_type" value={type}
-                    checked={form.project_type === type}
-                    onChange={() => setField('project_type', type)}
-                    style={{ width: 'auto', margin: 0 }}
-                  />
-                  <span style={{ fontSize: '0.88rem' }}>{type}</span>
-                </label>
-              ))}
+              {PROJECT_TYPES.map(type => {
+                const checked = form.project_type.includes(type);
+                return (
+                  <label key={type} style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    cursor: 'pointer', padding: '10px 12px', borderRadius: 8,
+                    background: checked ? 'rgba(59,130,246,0.15)' : 'var(--card-bg)',
+                    border: `1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
+                    transition: 'all 0.15s',
+                  }}>
+                    <input
+                      type="checkbox" name="project_type" value={type}
+                      checked={checked}
+                      onChange={() => toggleProjectType(type)}
+                      style={{ width: 'auto', margin: 0 }}
+                    />
+                    <span style={{ fontSize: '0.88rem' }}>{type}</span>
+                  </label>
+                );
+              })}
             </div>
           </div>
 
@@ -201,7 +217,7 @@ export default function NewProjectPage({ onSaved, addToast }) {
         <button
           className="btn btn-primary btn-full"
           type="submit"
-          disabled={loading || !form.project_type || !form.client_name || !form.memo?.trim()}
+          disabled={loading || !form.project_type.length || !form.client_name || !form.memo?.trim()}
         >
           {loading ? '登録中...' : '依頼を送信する'}
         </button>
