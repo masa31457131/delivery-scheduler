@@ -384,14 +384,30 @@ function addBusinessDays(date, days) {
 const DELIVERY_LABEL = (m) => m === 'onsite' ? '🚗 現地訪問' : '🖥 リモート';
 
 // 案件ID採番：DS-YYYYMM-NNNN（月ごと連番）
+// case_id_counters テーブルで永続的にカウンターを管理し、案件が削除されても
+// 「最終採番＋１」を維持する（歯抜けになった番号を再利用しない）
 async function generateCaseId() {
   const now = new Date();
   const prefix = 'DS-' + now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0');
-  const { rows } = await pool.query(
-    "SELECT COUNT(*) as cnt FROM projects WHERE case_id LIKE $1",
+
+  // このprefixのカウンターがまだ無い場合、既存データの最大採番済み番号から初期化する
+  // （導入前に発行済みの案件IDと重複しないようにするための移行措置）
+  const { rows: existingMax } = await pool.query(
+    `SELECT COALESCE(MAX(CAST(SUBSTRING(case_id FROM '-(\\d+)$') AS INTEGER)), 0) AS max_seq
+     FROM projects WHERE case_id LIKE $1`,
     [prefix + '%']
   );
-  const seq = (parseInt(rows[0].cnt) + 1).toString().padStart(4, '0');
+  await pool.query(
+    `INSERT INTO case_id_counters (prefix, last_seq) VALUES ($1, $2) ON CONFLICT (prefix) DO NOTHING`,
+    [prefix, existingMax[0].max_seq || 0]
+  );
+
+  // 採番は必ずカウンターをインクリメントして取得する（案件テーブルの現在の件数には依存しない）
+  const { rows } = await pool.query(
+    `UPDATE case_id_counters SET last_seq = last_seq + 1 WHERE prefix=$1 RETURNING last_seq`,
+    [prefix]
+  );
+  const seq = String(rows[0].last_seq).padStart(4, '0');
   return `${prefix}-${seq}`;
 }
 
@@ -450,6 +466,10 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS settings (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS case_id_counters (
+        prefix   TEXT PRIMARY KEY,
+        last_seq INTEGER NOT NULL DEFAULT 0
       );
     `);
 
